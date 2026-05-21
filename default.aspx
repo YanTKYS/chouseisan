@@ -5,6 +5,7 @@
 <%@ Import Namespace="System.Text" %>
 <!-- AD連携用名前空間の追加 -->
 <%@ Import Namespace="System.DirectoryServices.AccountManagement" %>
+<%@ Import Namespace="System.Text.RegularExpressions" %>
 
 <script runat="server">
     // =============================================================================
@@ -22,6 +23,7 @@
         public bool locked { get; set; } 
         public List<string> dates { get; set; }
         public List<Participant> participants { get; set; }
+        public string creatorLoginId { get; set; }
     }
 
     public class Participant
@@ -43,39 +45,33 @@
         // ---------------------------------------------------------
         if (string.IsNullOrEmpty(mode)) 
         {
-            // ADから氏名を取得する処理
-            try 
+            if (Session["UserDisplayName"] != null)
             {
-                // 現在のログインユーザーID (DOMAIN\User) を取得
+                UserDisplayName = (string)Session["UserDisplayName"];
+            }
+            else
+            {
                 string loginId = User.Identity.Name;
-                
                 if (!string.IsNullOrEmpty(loginId))
                 {
-                    // ADコンテキストの生成
-                    using (PrincipalContext ctx = new PrincipalContext(ContextType.Domain))
+                    try
                     {
-                        // ユーザー情報の検索
-                        UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId);
-                        if (user != null && !string.IsNullOrEmpty(user.DisplayName))
+                        using (PrincipalContext ctx = new PrincipalContext(ContextType.Domain))
                         {
-                            UserDisplayName = user.DisplayName; // 表示名を取得
-                        }
-                        else
-                        {
-                            // 取得できなければログオンIDをそのまま使う（または空）
-                            UserDisplayName = loginId; 
+                            UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId);
+                            UserDisplayName = (user != null && !string.IsNullOrEmpty(user.DisplayName))
+                                ? user.DisplayName
+                                : loginId;
                         }
                     }
+                    catch
+                    {
+                        UserDisplayName = loginId;
+                    }
+                    Session["UserDisplayName"] = UserDisplayName;
                 }
             }
-            catch (Exception ex)
-            {
-                // AD接続エラー時はログオンIDなどでフォールバック、あるいは空にする
-                // エラーで止まらないように空文字を設定
-                UserDisplayName = User.Identity.Name; 
-            }
-            
-            return; // HTMLを描画して終了
+            return;
         }
 
         // ---------------------------------------------------------
@@ -105,7 +101,8 @@
                     title = title,
                     locked = false,
                     dates = new List<string>(rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)),
-                    participants = new List<Participant>()
+                    participants = new List<Participant>(),
+                    creatorLoginId = User.Identity.Name
                 };
                 SaveJson(dataDir + eventId + ".json", newEvent);
                 Response.Write(serializer.Serialize(new { status = "ok", id = eventId }));
@@ -113,13 +110,32 @@
             else if (mode == "load")
             {
                 string id = Request["id"];
+                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
-                if (File.Exists(path)) Response.Write(File.ReadAllText(path, Encoding.UTF8));
-                else Response.Write(serializer.Serialize(new { status = "error", msg = "データなし" }));
+                if (File.Exists(path))
+                {
+                    string json = File.ReadAllText(path, Encoding.UTF8);
+                    var eventData = serializer.Deserialize<EventData>(json);
+                    bool isOwner = string.IsNullOrEmpty(eventData.creatorLoginId) ||
+                                   eventData.creatorLoginId == User.Identity.Name;
+                    Response.Write(serializer.Serialize(new {
+                        id = eventData.id,
+                        title = eventData.title,
+                        locked = eventData.locked,
+                        dates = eventData.dates,
+                        participants = eventData.participants,
+                        isOwner = isOwner
+                    }));
+                }
+                else
+                {
+                    Response.Write(serializer.Serialize(new { status = "error", msg = "Not found." }));
+                }
             }
             else if (mode == "update")
             {
                 string id = Request["id"];
+                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
@@ -145,28 +161,36 @@
             else if (mode == "lock")
             {
                 string id = Request["id"];
+                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (File.Exists(path)) {
-                        string json = File.ReadAllText(path, Encoding.UTF8);
-                        var eventData = serializer.Deserialize<EventData>(json);
-                        eventData.locked = true;
-                        File.WriteAllText(path, serializer.Serialize(eventData), Encoding.UTF8);
-                        Response.Write(serializer.Serialize(new { status = "ok" }));
-                    } else throw new Exception("データなし");
+                    if (!File.Exists(path)) throw new Exception("Not found.");
+                    string json = File.ReadAllText(path, Encoding.UTF8);
+                    var eventData = serializer.Deserialize<EventData>(json);
+                    if (!string.IsNullOrEmpty(eventData.creatorLoginId) &&
+                        eventData.creatorLoginId != User.Identity.Name)
+                        throw new Exception("Unauthorized.");
+                    eventData.locked = true;
+                    File.WriteAllText(path, serializer.Serialize(eventData), Encoding.UTF8);
+                    Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
             }
             else if (mode == "delete")
             {
                 string id = Request["id"];
+                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (File.Exists(path)) {
-                        File.Delete(path);
-                        Response.Write(serializer.Serialize(new { status = "ok" }));
-                    } else throw new Exception("データなし");
+                    if (!File.Exists(path)) throw new Exception("Not found.");
+                    string json = File.ReadAllText(path, Encoding.UTF8);
+                    var eventData = serializer.Deserialize<EventData>(json);
+                    if (!string.IsNullOrEmpty(eventData.creatorLoginId) &&
+                        eventData.creatorLoginId != User.Identity.Name)
+                        throw new Exception("Unauthorized.");
+                    File.Delete(path);
+                    Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
             }
         }
@@ -175,6 +199,11 @@
             Response.Write(serializer.Serialize(new { status = "error", msg = ex.Message }));
         }
         Response.End();
+    }
+
+    private bool IsValidEventId(string id)
+    {
+        return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt\d{17}$");
     }
 
     private void SaveJson(string path, object data)
@@ -297,7 +326,7 @@
         </div>
 
         <!-- 管理エリア -->
-        <div class="admin-area" id="admin-controls">
+        <div class="admin-area hidden" id="admin-controls">
             <span style="font-size:0.9em; color:#666;">管理者メニュー：</span>
             <button class="btn-lock" onclick="execLockEvent()">確定して締め切る</button>
             <button class="btn-delete" onclick="execDeleteEvent()">削除する</button>
@@ -363,16 +392,23 @@
                 $("#evt-title").addClass("locked-title").text(data.title + "【確定済】");
                 $("#input-container").addClass("hidden");
                 $("#locked-message").removeClass("hidden");
-                $(".btn-lock").hide();
             } else {
                 $("#evt-title").removeClass("locked-title");
                 $("#input-container").removeClass("hidden");
                 $("#locked-message").addClass("hidden");
-                $(".btn-lock").show();
                 renderInputs(data);
-                
-                // 読み込み後に再度氏名をセット（再描画対策）
                 if(currentUserDisplayName) $("#my-name").val(currentUserDisplayName);
+            }
+
+            if(data.isOwner) {
+                $("#admin-controls").removeClass("hidden");
+                if(data.locked) {
+                    $(".btn-lock").hide();
+                } else {
+                    $(".btn-lock").show();
+                }
+            } else {
+                $("#admin-controls").addClass("hidden");
             }
         });
     }
