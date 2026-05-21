@@ -94,7 +94,7 @@
                 string rawDates = Request["dates"];
                 if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(rawDates)) throw new Exception("入力不足");
 
-                string eventId = "evt" + DateTime.Now.ToString("yyyyMMddHHmmss") + new Random().Next(100, 999);
+                string eventId = "evt" + Guid.NewGuid().ToString("N");
                 var newEvent = new EventData
                 {
                     id = eventId,
@@ -154,7 +154,7 @@
                     if (person != null) { person.answers = answers; person.comment = Request["comment"]; }
                     else { eventData.participants.Add(new Participant { name = name, answers = answers, comment = Request["comment"] }); }
 
-                    File.WriteAllText(path, serializer.Serialize(eventData), Encoding.UTF8);
+                    SaveJson(path, eventData);
                 }
                 Response.Write(serializer.Serialize(new { status = "ok" }));
             }
@@ -172,7 +172,7 @@
                         eventData.creatorLoginId != User.Identity.Name)
                         throw new Exception("Unauthorized.");
                     eventData.locked = true;
-                    File.WriteAllText(path, serializer.Serialize(eventData), Encoding.UTF8);
+                    SaveJson(path, eventData);
                     Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
             }
@@ -198,12 +198,13 @@
         {
             Response.Write(serializer.Serialize(new { status = "error", msg = ex.Message }));
         }
-        Response.End();
+        Response.Flush();
+        Context.ApplicationInstance.CompleteRequest();
     }
 
     private bool IsValidEventId(string id)
     {
-        return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt\d{17}$");
+        return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt[0-9a-f]{32}$");
     }
 
     private void SaveJson(string path, object data)
@@ -414,41 +415,42 @@
     }
 
     function renderTable(data){
-        var html = '<table><thead><tr><th style="min-width:120px;">参加者</th>';
-        data.dates.forEach(function(d){ html += '<th>' + escapeHtml(d) + '</th>'; });
-        html += '<th style="min-width:150px;">コメント</th></tr></thead><tbody>';
+        var parts = [];
+        parts.push('<table><thead><tr><th style="min-width:120px;">参加者</th>');
+        data.dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
+        parts.push('<th style="min-width:150px;">コメント</th></tr></thead><tbody>');
 
         data.participants.forEach(function(p){
-            html += '<tr><td>' + escapeHtml(p.name) + '</td>';
+            parts.push('<tr><td>' + escapeHtml(p.name) + '</td>');
             p.answers.forEach(function(a){
                 var sym = a===2 ? "○" : (a===1 ? "△" : "×");
                 var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : "symbol-ng");
-                html += '<td class="'+cls+'">' + sym + '</td>';
+                parts.push('<td class="'+cls+'">' + sym + '</td>');
             });
-            html += '<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>';
+            parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
         });
 
-        html += '<tr style="background:#ffffe0; font-weight:bold;"><td>○の数</td>';
+        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td>○の数</td>');
         for(var i=0; i<data.dates.length; i++){
             var count = 0;
             data.participants.forEach(function(p){ if(p.answers[i]===2) count++; });
-            html += '<td>' + count + '</td>';
+            parts.push('<td>' + count + '</td>');
         }
-        html += '<td>-</td></tr></tbody></table>';
-        $("#table-container").html(html);
+        parts.push('<td>-</td></tr></tbody></table>');
+        $("#table-container").html(parts.join(''));
     }
 
     function renderInputs(data){
-        var html = '';
+        var parts = [];
         data.dates.forEach(function(d, idx){
-            html += '<div style="margin-top:10px; border-bottom:1px dotted #ccc; padding-bottom:5px;">';
-            html += '<span style="font-weight:bold;">' + escapeHtml(d) + '</span><br>';
-            html += '<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2" checked> <span class="symbol-ok">○</span></label> ';
-            html += '<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"> <span class="symbol-tri">△</span></label> ';
-            html += '<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"> <span class="symbol-ng">×</span></label>';
-            html += '</div>';
+            parts.push('<div style="margin-top:10px; border-bottom:1px dotted #ccc; padding-bottom:5px;">');
+            parts.push('<span style="font-weight:bold;">' + escapeHtml(d) + '</span><br>');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2" checked> <span class="symbol-ok">○</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"> <span class="symbol-tri">△</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"> <span class="symbol-ng">×</span></label>');
+            parts.push('</div>');
         });
-        $("#date-inputs").html(html);
+        $("#date-inputs").html(parts.join(''));
     }
 
     function submitAnswer(){
