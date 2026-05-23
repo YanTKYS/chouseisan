@@ -264,6 +264,19 @@
         .input-area { background: #eef2f7; padding: 20px; border-radius: 6px; margin-top: 30px; }
         .locked-msg { background: #fff3cd; color: #856404; padding: 15px; border: 1px solid #ffeeba; border-radius: 4px; margin-top: 20px; text-align: center; font-weight: bold;}
         .share-url-box { background: #f0f0f0; padding: 10px; border-radius: 4px; word-break: break-all; font-family: monospace; color: #007bff; }
+        .copy-btn { margin-top: 6px; padding: 4px 12px; font-size: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .copy-btn:hover { background: #0056b3; }
+        .copy-btn.copied { background: #28a745; }
+        .locked-banner { background: #495057; color: white; padding: 12px 18px; border-radius: 4px; margin: 0 0 20px; font-weight: bold; text-align: center; font-size: 15px; }
+        th:first-child, td:first-child { position: sticky; left: 0; z-index: 1; }
+        th:first-child { background: #f8f9fa; }
+        td:first-child { background: #fff; }
+        .toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: #323232; color: #fff; padding: 10px 24px; border-radius: 20px; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 9999; white-space: nowrap; }
+        .toast.show { opacity: 1; }
+        .inline-confirm { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 12px 14px; margin-top: 10px; text-align: left; }
+        .inline-confirm p { margin: 0 0 10px; font-size: 13px; color: #856404; }
+        .btn-confirm-yes, .btn-confirm-cancel { padding: 5px 14px; font-size: 13px; border: none; border-radius: 4px; cursor: pointer; color: white; margin-top: 0; }
+        .btn-confirm-cancel { background: #6c757d; margin-left: 8px; }
     </style>
 </head>
 <body>
@@ -299,10 +312,12 @@
     <!-- 調整・閲覧画面 -->
     <div id="schedule-view" class="hidden">
         <h2 id="evt-title">イベント名</h2>
+        <div id="locked-banner" class="locked-banner hidden">このイベントは確定済みのため、回答を締め切っています</div>
         
         <div style="margin-bottom: 20px;">
             <span style="font-size:14px; font-weight:bold;">共有用URL：</span>
             <div id="share-url" class="share-url-box"></div>
+            <button class="copy-btn" onclick="copyShareUrl()">URLをコピー</button>
         </div>
 
         <div id="table-container" style="overflow-x: auto;"></div>
@@ -317,9 +332,9 @@
             <div id="date-inputs"></div>
             
             <label>コメント（任意）</label>
-            <input type="text" id="my-comment">
+            <input type="text" id="my-comment" placeholder="例：午後以降なら参加可能です">
 
-            <button class="btn-primary" onclick="submitAnswer()">登録する</button>
+            <button id="btn-submit" class="btn-primary" onclick="submitAnswer()">登録する</button>
         </div>
 
         <div id="locked-message" class="hidden locked-msg">
@@ -331,6 +346,11 @@
             <span style="font-size:0.9em; color:#666;">管理者メニュー：</span>
             <button class="btn-lock" onclick="execLockEvent()">確定して締め切る</button>
             <button class="btn-delete" onclick="execDeleteEvent()">削除する</button>
+            <div id="inline-confirm" class="inline-confirm hidden">
+                <p id="inline-confirm-msg"></p>
+                <button id="btn-confirm-yes" class="btn-confirm-yes">はい</button>
+                <button onclick="hideConfirm()" class="btn-confirm-cancel">キャンセル</button>
+            </div>
         </div>
         
         <div style="margin-top:20px; text-align:right;">
@@ -385,18 +405,16 @@
             $("#schedule-view").removeClass("hidden");
             
             $("#evt-title").text(data.title);
+            document.title = data.title + " - 調整さん";
             $("#share-url").text(window.location.href);
-
             renderTable(data);
             
             if(data.locked) {
-                $("#evt-title").addClass("locked-title").text(data.title + "【確定済】");
+                $("#locked-banner").removeClass("hidden");
                 $("#input-container").addClass("hidden");
-                $("#locked-message").removeClass("hidden");
             } else {
-                $("#evt-title").removeClass("locked-title");
+                $("#locked-banner").addClass("hidden");
                 $("#input-container").removeClass("hidden");
-                $("#locked-message").addClass("hidden");
                 renderInputs(data);
                 if(currentUserDisplayName) $("#my-name").val(currentUserDisplayName);
             }
@@ -415,6 +433,10 @@
     }
 
     function renderTable(data){
+        if(data.participants.length === 0) {
+            $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">まだ回答がありません。</p>');
+            return;
+        }
         var parts = [];
         parts.push('<table><thead><tr><th style="min-width:120px;">参加者</th>');
         data.dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
@@ -430,7 +452,7 @@
             parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
         });
 
-        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td>○の数</td>');
+        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">○の数</td>');
         for(var i=0; i<data.dates.length; i++){
             var count = 0;
             data.participants.forEach(function(p){ if(p.answers[i]===2) count++; });
@@ -441,13 +463,18 @@
     }
 
     function renderInputs(data){
+        var myName = currentUserDisplayName || $("#my-name").val();
+        var myAnswers = null;
+        data.participants.forEach(function(p){ if(p.name === myName) myAnswers = p.answers; });
+
         var parts = [];
         data.dates.forEach(function(d, idx){
+            var val = (myAnswers && myAnswers[idx] !== undefined) ? myAnswers[idx] : 2;
             parts.push('<div style="margin-top:10px; border-bottom:1px dotted #ccc; padding-bottom:5px;">');
             parts.push('<span style="font-weight:bold;">' + escapeHtml(d) + '</span><br>');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2" checked> <span class="symbol-ok">○</span></label> ');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"> <span class="symbol-tri">△</span></label> ');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"> <span class="symbol-ng">×</span></label>');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2"' + (val===2?' checked':'') + '> <span class="symbol-ok">○</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"' + (val===1?' checked':'') + '> <span class="symbol-tri">△</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"' + (val===0?' checked':'') + '> <span class="symbol-ng">×</span></label>');
             parts.push('</div>');
         });
         $("#date-inputs").html(parts.join(''));
@@ -455,13 +482,14 @@
 
     function submitAnswer(){
         var name = $("#my-name").val();
-        if(!name){ alert("氏名を入力してください"); return; }
+        if(!name){ showToast("名前を入力してください"); return; }
 
         var answers = [];
         for(var i=0; i<eventData.dates.length; i++){
             answers.push($('input[name="ans_'+i+'"]:checked').val());
         }
 
+        var $btn = $("#btn-submit").prop("disabled", true);
         $.post("default.aspx?mode=update", {
             id: currentEventId,
             name: name,
@@ -470,39 +498,67 @@
         }, function(res){
             if(res.status === "ok"){
                 loadEvent(currentEventId);
-                // コメントのみクリアします。
-                // $("#my-name").val(""); 
+                showToast("登録しました。");
                 $("#my-comment").val("");
             } else {
-                alert("エラーが発生しました: " + res.msg);
+                showToast("エラー：" + res.msg);
             }
-        });
+        }).always(function(){ $btn.prop("disabled", false); });
     }
 
     function execLockEvent() {
-        if(!confirm("本当にこの日程調整を締め切りますか？\n締め切ると、これ以上回答を追加できなくなります。")) return;
-
-        $.post("default.aspx?mode=lock", { id: currentEventId }, function(res){
-            if(res.status === "ok") {
-                alert("締め切りました。");
-                loadEvent(currentEventId);
-            } else {
-                alert("エラーが発生しました");
-            }
-        });
+        showConfirm("本当に締め切りますか？締め切ると、これ以上回答を追加できなくなります。", function(){
+            $.post("default.aspx?mode=lock", { id: currentEventId }, function(res){
+                if(res.status === "ok") {
+                    loadEvent(currentEventId);
+                    showToast("締め切りました。");
+                } else {
+                    showToast("エラーが発生しました");
+                }
+            });
+        }, "#28a745");
     }
 
     function execDeleteEvent() {
-        if(!confirm("本当に削除しますか？\nこの操作は取り消せません。")) return;
+        showConfirm("本当に削除しますか？この操作は取り消せません。", function(){
+            $.post("default.aspx?mode=delete", { id: currentEventId }, function(res){
+                if(res.status === "ok") {
+                    window.location.href = "default.aspx";
+                } else {
+                    showToast("エラーが発生しました");
+                }
+            });
+        }, "#dc3545");
+    }
 
-        $.post("default.aspx?mode=delete", { id: currentEventId }, function(res){
-            if(res.status === "ok") {
-                alert("削除しました。トップ画面に戻ります。");
-                window.location.href = "default.aspx";
-            } else {
-                alert("エラーが発生しました");
-            }
-        });
+    function copyShareUrl() {
+        var url = $("#share-url").text();
+        if(navigator.clipboard) {
+            navigator.clipboard.writeText(url).then(function(){
+                var $btn = $(".copy-btn");
+                $btn.text("コピーしました！").addClass("copied");
+                setTimeout(function(){ $btn.text("URLをコピー").removeClass("copied"); }, 2000);
+            });
+        } else {
+            window.prompt("URL:", url);
+        }
+    }
+
+    function showToast(msg) {
+        var $t = $("#toast");
+        $t.text(msg).addClass("show");
+        setTimeout(function(){ $t.removeClass("show"); }, 2500);
+    }
+
+    function showConfirm(msg, action, btnColor) {
+        $("#inline-confirm-msg").text(msg);
+        $("#btn-confirm-yes").css("background", btnColor || "#dc3545")
+            .off("click").on("click", function(){ hideConfirm(); action(); });
+        $("#inline-confirm").removeClass("hidden");
+    }
+
+    function hideConfirm() {
+        $("#inline-confirm").addClass("hidden");
     }
 
     function escapeHtml(str) {
@@ -513,5 +569,6 @@
     }
 </script>
 
+<div id="toast" class="toast"></div>
 </body>
 </html>
