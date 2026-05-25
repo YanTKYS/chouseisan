@@ -92,6 +92,41 @@ chouseisan/
 ### jQuery
 `./common/jquery-3.6.0.min.js` を別途配置してください（`default.aspx` からの相対パスで参照しています）。
 
+## 文字コードに関する運用注意事項
+
+### リポジトリと動作環境の文字コード
+
+| 場所 | 文字コード |
+|------|-----------|
+| このリポジトリ | UTF-8 |
+| IIS動作環境 | Shift-JIS |
+
+リポジトリ上のファイルはUTF-8で管理されています。IIS環境ではShift-JISが必要なため、**デプロイ前に管理者がファイルをShift-JISに変換**してください。
+
+### 変換手順（PowerShell）
+
+```powershell
+$src  = "default.aspx"        # UTF-8のファイル
+$dest = "default_sjis.aspx"   # 変換後ファイル（IISに配置するもの）
+
+$content = Get-Content $src -Encoding UTF8 -Raw
+[System.IO.File]::WriteAllText(
+    (Resolve-Path $dest).Path,
+    $content,
+    [System.Text.Encoding]::GetEncoding("shift_jis")
+)
+```
+
+または `web.config` を変更して対応する方法もあります（後述）。
+
+### web.config でUTF-8のまま動作させる場合（代替案）
+
+`web.config` の `<system.web>` に以下を追加するとIISがUTF-8として処理します。ただし動作確認が必要です。
+
+```xml
+<globalization fileEncoding="utf-8" requestEncoding="utf-8" responseEncoding="utf-8" />
+```
+
 ## 注意事項
 
 - `web.config` の `<customErrors mode="Off"/>` は本番環境では `RemoteOnly` または `On` に変更することを推奨します
