@@ -97,6 +97,7 @@ chouseisan/
 ### 前提条件
 - IIS (Internet Information Services)
 - .NET Framework 4.7 以上
+- **HTTPS（必須）**: セッションCookie・CSRFトークン・イベント情報を平文送信しないようにHTTPSが必須です
 - **Windows認証が有効なActive Directory環境（必須）**  
   Windows認証なしではイベントの作成・管理ができません。IISの認証設定で「Windows 認証」を有効化してください。
 
@@ -105,6 +106,8 @@ chouseisan/
 2. `App_Data/` ディレクトリへの書き込み権限をIISアプリプールユーザーに付与
 3. `web.config` の設定を環境に合わせて調整
 4. IIS の認証設定で「Windows 認証」を有効化し、「匿名認証」を無効化
+5. IIS でHTTPSバインディングと証明書を設定し、HTTP（ポート80）バインディングを削除またはHTTPSへリダイレクト
+6. `web.config` の `<httpCookies requireSSL="true" httpOnlyCookies="true" />` が有効なことを確認（HTTPで運用する場合はこの行を削除するか`requireSSL="false"`に変更）
 
 ### 既存環境からのアップグレード
 
