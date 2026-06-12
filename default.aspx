@@ -148,11 +148,13 @@
 
             if (mode == "create")
             {
-                string title = Request.Form["title"];
+                string title = (Request.Form["title"] ?? "").Trim();
                 if (string.IsNullOrEmpty(title) || title.Length > 100) throw new AppException("イベント名が無効です。");
                 string rawDates = Request.Form["dates"];
-                if (string.IsNullOrEmpty(rawDates)) throw new AppException("入力不足");
-                var dateList = new List<string>(rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries));
+                if (string.IsNullOrWhiteSpace(rawDates)) throw new AppException("入力不足");
+                var rawDateLines = rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                var dateList = new List<string>();
+                foreach (var dl in rawDateLines) { var t = dl.Trim(); if (!string.IsNullOrEmpty(t)) dateList.Add(t); }
                 if (dateList.Count == 0 || dateList.Count > 31 || dateList.Exists(d => d.Length > 50))
                     throw new AppException("候補日の形式が不正です。");
 
@@ -223,7 +225,7 @@
 
                     if (eventData.locked) throw new AppException("このイベントは既に締め切られています。", 409);
 
-                    string name = Request.Form["name"];
+                    string name = (Request.Form["name"] ?? "").Trim();
                     if (string.IsNullOrEmpty(name) || name.Length > 50) throw new AppException("名前が無効です。");
                     string ansStr = Request.Form["answers"];
                     if (string.IsNullOrEmpty(ansStr)) throw new AppException("回答が指定されていません。");
@@ -300,9 +302,20 @@
             if (Response.StatusCode == 200) Response.StatusCode = ex.HttpStatus;
             Response.Write(serializer.Serialize(new { status = "error", msg = ex.Message }));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             if (Response.StatusCode == 200) Response.StatusCode = 500;
+            try
+            {
+                string logMsg = string.Format(
+                    "Chouseisan: mode={0} id={1} user={2}\r\n{3}",
+                    mode,
+                    Request.QueryString["id"] ?? Request.Form["id"] ?? "(none)",
+                    User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)",
+                    ex.ToString());
+                System.Diagnostics.EventLog.WriteEntry("Application", logMsg, System.Diagnostics.EventLogEntryType.Error);
+            }
+            catch { }
             Response.Write(serializer.Serialize(new { status = "error", msg = "サーバー処理中にエラーが発生しました。" }));
         }
         Response.Flush();
@@ -323,10 +336,23 @@
         try
         {
             File.WriteAllText(tempPath, json, Encoding.UTF8);
-            if (File.Exists(path))
-                File.Replace(tempPath, path, null);
-            else
-                File.Move(tempPath, path);
+            int retries = 3;
+            while (true)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                        File.Replace(tempPath, path, null);
+                    else
+                        File.Move(tempPath, path);
+                    break;
+                }
+                catch (IOException)
+                {
+                    if (--retries <= 0) throw;
+                    System.Threading.Thread.Sleep(50);
+                }
+            }
             tempPath = null;
         }
         finally
@@ -500,7 +526,10 @@
         var serverMsg = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : null;
         if (xhr.status === 401) {
             alert(serverMsg || "認証エラーが発生しました。ページを再読み込みしてください。");
-            window.location.reload();
+            if (!sessionStorage.getItem('_authReloaded')) {
+                sessionStorage.setItem('_authReloaded', '1');
+                window.location.reload();
+            }
             return;
         }
         if (xhr.status === 403) {
