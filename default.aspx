@@ -3,18 +3,19 @@
 <%@ Import Namespace="System.Collections.Generic" %>
 <%@ Import Namespace="System.Web.Script.Serialization" %>
 <%@ Import Namespace="System.Text" %>
-<!-- AD�A�g�p���O��Ԃ̒ǉ� -->
+<!-- AD連携用名前空間の追加 -->
 <%@ Import Namespace="System.DirectoryServices.AccountManagement" %>
 <%@ Import Namespace="System.Text.RegularExpressions" %>
 
 <script runat="server">
     // =============================================================================
-    // �����o�ϐ�: HTML���ŗ��p���邽�� public �Œ�`
+    // メンバ変数: HTML側で利用するため public で定義
     // =============================================================================
     public string UserDisplayName = "";
+    public string CsrfToken = "";
 
     // =============================================================================
-    // �f�[�^�N���X��`
+    // データクラス定義
     // =============================================================================
     public class EventData
     {
@@ -34,17 +35,21 @@
     }
 
     // =============================================================================
-    // �o�b�N�G���h����
+    // バックエンド処理
     // =============================================================================
     protected void Page_Load(object sender, EventArgs e)
     {
-        string mode = Request["mode"];
+        string mode = Request.QueryString["mode"];
 
         // ---------------------------------------------------------
-        // �ʏ�A�N�Z�X�� (HTML�\��)
+        // 通常アクセス時 (HTML表示)
         // ---------------------------------------------------------
         if (string.IsNullOrEmpty(mode)) 
         {
+            if (Session["CsrfToken"] == null)
+                Session["CsrfToken"] = Guid.NewGuid().ToString("N");
+            CsrfToken = (string)Session["CsrfToken"];
+
             if (Session["UserDisplayName"] != null)
             {
                 UserDisplayName = (string)Session["UserDisplayName"];
@@ -75,7 +80,7 @@
         }
 
         // ---------------------------------------------------------
-        // API���� (AJAX)
+        // API処理 (AJAX)
         // ---------------------------------------------------------
         Response.ContentType = "application/json";
         Response.ContentEncoding = Encoding.UTF8;
@@ -88,11 +93,31 @@
 
         try
         {
+            if (mode == "create" || mode == "update" || mode == "lock" || mode == "delete")
+            {
+                if (Request.HttpMethod != "POST")
+                {
+                    Response.StatusCode = 405;
+                    Response.AddHeader("Allow", "POST");
+                    throw new Exception("Method Not Allowed");
+                }
+                string reqToken = Request.Headers["X-CSRF-Token"];
+                if (string.IsNullOrEmpty(reqToken) || reqToken != (string)Session["CsrfToken"])
+                {
+                    Response.StatusCode = 403;
+                    throw new Exception("Invalid CSRF token.");
+                }
+            }
+
             if (mode == "create")
             {
-                string title = Request["title"];
-                string rawDates = Request["dates"];
-                if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(rawDates)) throw new Exception("���͕s��");
+                string title = Request.Form["title"];
+                if (string.IsNullOrEmpty(title) || title.Length > 100) throw new Exception("イベント名が無効です。");
+                string rawDates = Request.Form["dates"];
+                if (string.IsNullOrEmpty(rawDates)) throw new Exception("入力不足");
+                var dateList = new List<string>(rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries));
+                if (dateList.Count == 0 || dateList.Count > 31 || dateList.Exists(d => d.Length > 50))
+                    throw new Exception("候補日の形式が不正です。");
 
                 string eventId = "evt" + Guid.NewGuid().ToString("N");
                 var newEvent = new EventData
@@ -100,7 +125,7 @@
                     id = eventId,
                     title = title,
                     locked = false,
-                    dates = new List<string>(rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)),
+                    dates = dateList,
                     participants = new List<Participant>(),
                     creatorLoginId = User.Identity.Name
                 };
@@ -109,14 +134,14 @@
             }
             else if (mode == "load")
             {
-                string id = Request["id"];
+                string id = Request.QueryString["id"];
                 if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 if (File.Exists(path))
                 {
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
-                    bool isOwner = string.IsNullOrEmpty(eventData.creatorLoginId) ||
+                    bool isOwner = !string.IsNullOrEmpty(eventData.creatorLoginId) &&
                                    eventData.creatorLoginId == User.Identity.Name;
                     Response.Write(serializer.Serialize(new {
                         id = eventData.id,
@@ -134,25 +159,33 @@
             }
             else if (mode == "update")
             {
-                string id = Request["id"];
+                string id = Request.Form["id"];
                 if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (!File.Exists(path)) throw new Exception("�f�[�^�Ȃ�");
+                    if (!File.Exists(path)) throw new Exception("データなし");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
 
-                    if (eventData.locked) throw new Exception("���̃C�x���g�͊��ɒ��ߐ؂��Ă��܂��B");
+                    if (eventData.locked) throw new Exception("このイベントは既に締め切られています。");
 
-                    string name = Request["name"];
-                    string ansStr = Request["answers"];
+                    string name = Request.Form["name"];
+                    if (string.IsNullOrEmpty(name) || name.Length > 50) throw new Exception("名前が無効です。");
+                    string ansStr = Request.Form["answers"];
                     var answers = new List<int>();
-                    foreach (var s in ansStr.Split(',')) answers.Add(int.Parse(s));
+                    foreach (var s in ansStr.Split(','))
+                    {
+                        if (!int.TryParse(s.Trim(), out int v) || v < 0 || v > 2) throw new Exception("回答値が不正です。");
+                        answers.Add(v);
+                    }
+                    if (answers.Count != eventData.dates.Count) throw new Exception("回答数が候補日数と一致しません。");
+                    string comment = Request.Form["comment"] ?? "";
+                    if (comment.Length > 200) throw new Exception("コメントが長すぎます。");
 
                     var person = eventData.participants.Find(p => p.name == name);
-                    if (person != null) { person.answers = answers; person.comment = Request["comment"]; }
-                    else { eventData.participants.Add(new Participant { name = name, answers = answers, comment = Request["comment"] }); }
+                    if (person != null) { person.answers = answers; person.comment = comment; }
+                    else { eventData.participants.Add(new Participant { name = name, answers = answers, comment = comment }); }
 
                     SaveJson(path, eventData);
                 }
@@ -160,7 +193,7 @@
             }
             else if (mode == "lock")
             {
-                string id = Request["id"];
+                string id = Request.Form["id"];
                 if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
@@ -168,7 +201,7 @@
                     if (!File.Exists(path)) throw new Exception("Not found.");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
-                    if (!string.IsNullOrEmpty(eventData.creatorLoginId) &&
+                    if (string.IsNullOrEmpty(eventData.creatorLoginId) ||
                         eventData.creatorLoginId != User.Identity.Name)
                         throw new Exception("Unauthorized.");
                     eventData.locked = true;
@@ -178,7 +211,7 @@
             }
             else if (mode == "delete")
             {
-                string id = Request["id"];
+                string id = Request.Form["id"];
                 if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
@@ -186,7 +219,7 @@
                     if (!File.Exists(path)) throw new Exception("Not found.");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
-                    if (!string.IsNullOrEmpty(eventData.creatorLoginId) &&
+                    if (string.IsNullOrEmpty(eventData.creatorLoginId) ||
                         eventData.creatorLoginId != User.Identity.Name)
                         throw new Exception("Unauthorized.");
                     File.Delete(path);
@@ -211,13 +244,19 @@
     private void SaveJson(string path, object data)
     {
         var serializer = new JavaScriptSerializer();
-        File.WriteAllText(path, serializer.Serialize(data), Encoding.UTF8);
+        string json = serializer.Serialize(data);
+        string tempPath = path + ".tmp";
+        File.WriteAllText(tempPath, json, Encoding.UTF8);
+        if (File.Exists(path))
+            File.Replace(tempPath, path, null);
+        else
+            File.Move(tempPath, path);
     }
 </script>
 
 <!-- 
 =============================================================================
- �t�����g�G���h���
+ フロントエンド画面
 =============================================================================
 -->
 <!DOCTYPE html>
@@ -225,19 +264,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>�������� - �������������c�[��</title>
-    <!-- jQuery�p�X: �w��̒ʂ� -->
+    <title>調整さん - 庁内日程調整ツール</title>
+    <!-- jQueryパス: 指定の通り -->
     <script src="./common/jquery-3.6.0.min.js"></script>
     <style>
         body { font-family: "Meiryo", "Hiragino Kaku Gothic ProN", sans-serif; background: #f4f4f4; padding: 20px; color: #333; }
         .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         
-        /* �w�b�_�[ */
+        /* ヘッダー */
         .app-header { border-bottom: 2px solid #007bff; padding-bottom: 15px; margin-bottom: 30px; display: flex; align-items: baseline; flex-wrap: wrap; }
         .logo-main { font-size: 32px; font-weight: bold; color: #007bff; margin-right: 15px; letter-spacing: 0.05em; }
         .logo-sub { font-size: 16px; color: #666; font-weight: normal; }
         
-        /* ���O�C�����[�U�[�\�� */
+        /* ログインユーザー表示 */
         .login-info { margin-left: auto; font-size: 14px; color: #555; background: #eee; padding: 5px 10px; border-radius: 4px; }
 
         h2 { font-size: 20px; margin-bottom: 15px; border-left: 5px solid #007bff; padding-left: 10px; color: #444; }
@@ -284,91 +323,94 @@
 
 <div class="container">
     <header class="app-header">
-        <span class="logo-main">��������</span>
-        <span class="logo-sub">�������������c�[��</span>
+        <span class="logo-main">調整さん</span>
+        <span class="logo-sub">庁内日程調整ツール</span>
         
-        <!-- ���O�C�����\���G���A -->
+        <!-- ログイン情報表示エリア -->
         <div class="login-info">
             Login: <strong><%= UserDisplayName %></strong>
         </div>
     </header>
 
-    <!-- �V�K�쐬��� -->
+    <!-- 新規作成画面 -->
     <div id="create-view">
-        <h2>�V�K�C�x���g�쐬</h2>
+        <h2>新規イベント作成</h2>
         <p style="font-size:14px; color:#666; margin-bottom:20px;">
-            ����������͂��ăC�x���g�y�[�W���쐬���܂��B<br>
-            �쐬���ꂽURL���Q���҂ɋ��L���Ă��������B
+            候補日程を入力してイベントページを作成します。<br>
+            作成されたURLを参加者に共有してください。
         </p>
         
-        <label>�C�x���g��</label>
-        <input type="text" id="new-title" placeholder="��F��3��DX���i��c">
+        <label>イベント名</label>
+        <input type="text" id="new-title" placeholder="例：第3回DX推進会議">
         
-        <label>�������i1�s��1���́j</label>
+        <label>候補日程（1行に1つ入力）</label>
         <textarea id="new-dates" rows="6" placeholder="5/20 10:00&#13;&#10;5/20 13:00&#13;&#10;5/21 10:00"></textarea>
         
-        <button class="btn-primary" onclick="execCreateEvent()">�C�x���g���쐬����</button>
+        <button class="btn-primary" onclick="execCreateEvent()">イベントを作成する</button>
     </div>
 
-    <!-- �����E�{����� -->
+    <!-- 調整・閲覧画面 -->
     <div id="schedule-view" class="hidden">
-        <h2 id="evt-title">�C�x���g��</h2>
-        <div id="locked-banner" class="locked-banner hidden">���̃C�x���g�͊m��ς݂̂��߁A�񓚂���ߐ؂��Ă��܂�</div>
+        <h2 id="evt-title">イベント名</h2>
+        <div id="locked-banner" class="locked-banner hidden">このイベントは確定済みのため、回答を締め切っています</div>
         
         <div style="margin-bottom: 20px;">
-            <span style="font-size:14px; font-weight:bold;">���L�pURL�F</span>
+            <span style="font-size:14px; font-weight:bold;">共有用URL：</span>
             <div id="share-url" class="share-url-box"></div>
-            <button class="copy-btn" onclick="copyShareUrl()">URL���R�s�[</button>
+            <button class="copy-btn" onclick="copyShareUrl()">URLをコピー</button>
         </div>
 
         <div id="table-container" style="overflow-x: auto;"></div>
 
-        <!-- ���̓G���A -->
+        <!-- 入力エリア -->
         <div id="input-container" class="input-area">
-            <h3 style="margin-top:0;">�o������͂���</h3>
-            <label>����</label>
-            <!-- AD�擾���������������l�ɐݒ肷�邽�߂̏ꏊ -->
-            <input type="text" id="my-name" placeholder="���� ����">
+            <h3 style="margin-top:0;">出欠を入力する</h3>
+            <label>氏名</label>
+            <!-- AD取得した氏名を初期値に設定するための場所 -->
+            <input type="text" id="my-name" placeholder="所属 氏名">
             
             <div id="date-inputs"></div>
             
-            <label>�R�����g�i�C�Ӂj</label>
-            <input type="text" id="my-comment" placeholder="��F�ߌ�ȍ~�Ȃ�Q���\�ł�">
+            <label>コメント（任意）</label>
+            <input type="text" id="my-comment" placeholder="例：午後以降なら参加可能です">
 
-            <button id="btn-submit" class="btn-primary" onclick="submitAnswer()">�o�^����</button>
+            <button id="btn-submit" class="btn-primary" onclick="submitAnswer()">登録する</button>
         </div>
 
         <div id="locked-message" class="hidden locked-msg">
-            ���̃C�x���g�͊m��ς݂̂��߁A�񓚂���ߐ؂�܂����B
+            このイベントは確定済みのため、回答を締め切りました。
         </div>
 
-        <!-- �Ǘ��G���A -->
+        <!-- 管理エリア -->
         <div class="admin-area hidden" id="admin-controls">
-            <span style="font-size:0.9em; color:#666;">�Ǘ��҃��j���[�F</span>
-            <button class="btn-lock" onclick="execLockEvent()">�m�肵�Ē��ߐ؂�</button>
-            <button class="btn-delete" onclick="execDeleteEvent()">�폜����</button>
+            <span style="font-size:0.9em; color:#666;">管理者メニュー：</span>
+            <button class="btn-lock" onclick="execLockEvent()">確定して締め切る</button>
+            <button class="btn-delete" onclick="execDeleteEvent()">削除する</button>
             <div id="inline-confirm" class="inline-confirm hidden">
                 <p id="inline-confirm-msg"></p>
-                <button id="btn-confirm-yes" class="btn-confirm-yes">�͂�</button>
-                <button onclick="hideConfirm()" class="btn-confirm-cancel">�L�����Z��</button>
+                <button id="btn-confirm-yes" class="btn-confirm-yes">はい</button>
+                <button onclick="hideConfirm()" class="btn-confirm-cancel">キャンセル</button>
             </div>
         </div>
         
         <div style="margin-top:20px; text-align:right;">
-            <a href="default.aspx" style="color:#007bff; text-decoration:none;">&laquo; �g�b�v�ɖ߂�</a>
+            <a href="default.aspx" style="color:#007bff; text-decoration:none;">&laquo; トップに戻る</a>
         </div>
     </div>
 </div>
 
 <script>
-    // �T�[�o�[���Ŏ擾����������JS�ϐ��ɃZ�b�g (�G�X�P�[�v�����t��)
-    var currentUserDisplayName = "<%= UserDisplayName.Replace("\"", "\\\"") %>";
+    // サーバー側で取得した氏名をJS変数にセット (エスケープ処理付き)
+    var currentUserDisplayName = "<%= HttpUtility.JavaScriptStringEncode(UserDisplayName) %>";
+    var csrfToken = "<%= CsrfToken %>";
 
     var currentEventId = "";
     var eventData = null;
 
+    $.ajaxSetup({ headers: { "X-CSRF-Token": csrfToken } });
+
     $(document).ready(function(){
-        // ��������AD���������Z�b�g
+        // 氏名欄にAD名を自動セット
         if(currentUserDisplayName) {
             $("#my-name").val(currentUserDisplayName);
         }
@@ -382,7 +424,7 @@
         var title = $("#new-title").val();
         var dates = $("#new-dates").val();
         
-        if(!title || !dates) { alert("�C�x���g���Ɠ�������͂��Ă�������"); return; }
+        if(!title || !dates) { alert("イベント名と日程を入力してください"); return; }
 
         $.post("default.aspx?mode=create", {
             title: title,
@@ -399,14 +441,14 @@
     function loadEvent(id){
         currentEventId = id;
         $.getJSON("default.aspx?mode=load&id=" + id, function(data){
-            if(data.status === "error"){ alert("�C�x���g��������܂���B�폜���ꂽ�\��������܂��B"); window.location.href="default.aspx"; return; }
+            if(data.status === "error"){ alert("イベントが見つかりません。削除された可能性があります。"); window.location.href="default.aspx"; return; }
             
             eventData = data;
             $("#create-view").addClass("hidden");
             $("#schedule-view").removeClass("hidden");
             
             $("#evt-title").text(data.title);
-            document.title = data.title + " - ��������";
+            document.title = data.title + " - 調整さん";
             $("#share-url").text(window.location.href);
             renderTable(data);
             
@@ -435,25 +477,25 @@
 
     function renderTable(data){
         if(data.participants.length === 0) {
-            $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">�܂��񓚂�����܂���B</p>');
+            $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">まだ回答がありません。</p>');
             return;
         }
         var parts = [];
-        parts.push('<table><thead><tr><th style="min-width:120px;">�Q����</th>');
+        parts.push('<table><thead><tr><th style="min-width:120px;">参加者</th>');
         data.dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
-        parts.push('<th style="min-width:150px;">�R�����g</th></tr></thead><tbody>');
+        parts.push('<th style="min-width:150px;">コメント</th></tr></thead><tbody>');
 
         data.participants.forEach(function(p){
             parts.push('<tr><td>' + escapeHtml(p.name) + '</td>');
             p.answers.forEach(function(a){
-                var sym = a===2 ? "��" : (a===1 ? "��" : "�~");
+                var sym = a===2 ? "○" : (a===1 ? "△" : "×");
                 var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : "symbol-ng");
                 parts.push('<td class="'+cls+'">' + sym + '</td>');
             });
             parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
         });
 
-        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">���̐�</td>');
+        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">○の数</td>');
         for(var i=0; i<data.dates.length; i++){
             var count = 0;
             data.participants.forEach(function(p){ if(p.answers[i]===2) count++; });
@@ -473,9 +515,9 @@
             var val = (myAnswers && myAnswers[idx] !== undefined) ? myAnswers[idx] : 2;
             parts.push('<div style="margin-top:10px; border-bottom:1px dotted #ccc; padding-bottom:5px;">');
             parts.push('<span style="font-weight:bold;">' + escapeHtml(d) + '</span><br>');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2"' + (val===2?' checked':'') + '> <span class="symbol-ok">��</span></label> ');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"' + (val===1?' checked':'') + '> <span class="symbol-tri">��</span></label> ');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"' + (val===0?' checked':'') + '> <span class="symbol-ng">�~</span></label>');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2"' + (val===2?' checked':'') + '> <span class="symbol-ok">○</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"' + (val===1?' checked':'') + '> <span class="symbol-tri">△</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"' + (val===0?' checked':'') + '> <span class="symbol-ng">×</span></label>');
             parts.push('</div>');
         });
         $("#date-inputs").html(parts.join(''));
@@ -483,7 +525,7 @@
 
     function submitAnswer(){
         var name = $("#my-name").val();
-        if(!name){ showToast("���O����͂��Ă�������"); return; }
+        if(!name){ showToast("名前を入力してください"); return; }
 
         var answers = [];
         for(var i=0; i<eventData.dates.length; i++){
@@ -499,34 +541,34 @@
         }, function(res){
             if(res.status === "ok"){
                 loadEvent(currentEventId);
-                showToast("�o�^���܂����B");
+                showToast("登録しました。");
                 $("#my-comment").val("");
             } else {
-                showToast("�G���[�F" + res.msg);
+                showToast("エラー：" + res.msg);
             }
         }).always(function(){ $btn.prop("disabled", false); });
     }
 
     function execLockEvent() {
-        showConfirm("�{���ɒ��ߐ؂�܂����H���ߐ؂�ƁA����ȏ�񓚂�ǉ��ł��Ȃ��Ȃ�܂��B", function(){
+        showConfirm("本当に締め切りますか？締め切ると、これ以上回答を追加できなくなります。", function(){
             $.post("default.aspx?mode=lock", { id: currentEventId }, function(res){
                 if(res.status === "ok") {
                     loadEvent(currentEventId);
-                    showToast("���ߐ؂�܂����B");
+                    showToast("締め切りました。");
                 } else {
-                    showToast("�G���[���������܂���");
+                    showToast("エラーが発生しました");
                 }
             });
         }, "#28a745");
     }
 
     function execDeleteEvent() {
-        showConfirm("�{���ɍ폜���܂����H���̑���͎������܂���B", function(){
+        showConfirm("本当に削除しますか？この操作は取り消せません。", function(){
             $.post("default.aspx?mode=delete", { id: currentEventId }, function(res){
                 if(res.status === "ok") {
                     window.location.href = "default.aspx";
                 } else {
-                    showToast("�G���[���������܂���");
+                    showToast("エラーが発生しました");
                 }
             });
         }, "#dc3545");
@@ -537,8 +579,8 @@
         if(navigator.clipboard) {
             navigator.clipboard.writeText(url).then(function(){
                 var $btn = $(".copy-btn");
-                $btn.text("�R�s�[���܂����I").addClass("copied");
-                setTimeout(function(){ $btn.text("URL���R�s�[").removeClass("copied"); }, 2000);
+                $btn.text("コピーしました！").addClass("copied");
+                setTimeout(function(){ $btn.text("URLをコピー").removeClass("copied"); }, 2000);
             });
         } else {
             window.prompt("URL:", url);
