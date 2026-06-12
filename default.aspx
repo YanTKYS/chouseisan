@@ -143,7 +143,7 @@
             if (mode != "create" && mode != "load" && mode != "update" && mode != "lock" && mode != "delete")
                 throw new AppException("Unknown mode.", 400);
 
-            string dataDir = Server.MapPath("../chouseisan/data/");
+            string dataDir = Server.MapPath("~/App_Data/chouseisan/");
             if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
 
             if (mode == "create")
@@ -305,12 +305,14 @@
         catch (Exception ex)
         {
             if (Response.StatusCode == 200) Response.StatusCode = 500;
+            string safeEx = ex.ToString();
+            if (safeEx.Length > 4000) safeEx = safeEx.Substring(0, 4000) + "...[truncated]";
             string logMsg = string.Format(
                 "Chouseisan: mode={0} id={1} user={2}\r\n{3}",
                 SanitizeLogValue(mode),
                 SanitizeLogValue(Request.QueryString["id"] ?? Request.Form["id"] ?? "(none)"),
-                User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)",
-                ex.ToString());
+                SanitizeLogValue(User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)"),
+                safeEx);
             bool logged = false;
             try
             {
@@ -320,7 +322,16 @@
             catch { }
             if (!logged)
             {
-                try { System.Diagnostics.Trace.TraceError(logMsg); }
+                try { System.Diagnostics.Trace.TraceError(logMsg); logged = true; }
+                catch { }
+            }
+            if (!logged)
+            {
+                try
+                {
+                    string logPath = Server.MapPath("~/App_Data/chouseisan_error.log");
+                    File.AppendAllText(logPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
+                }
                 catch { }
             }
             Response.Write(serializer.Serialize(new { status = "error", msg = "サーバー処理中にエラーが発生しました。" }));
@@ -340,7 +351,7 @@
         if (string.IsNullOrEmpty(value)) return "(empty)";
         var sb = new StringBuilder();
         foreach (char c in value)
-            if (c >= 0x20) sb.Append(c);
+            if (!char.IsControl(c)) sb.Append(c);
         string result = sb.ToString();
         return result.Length > 100 ? result.Substring(0, 100) + "..." : result;
     }
