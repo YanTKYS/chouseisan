@@ -98,6 +98,34 @@ chouseisan/
 3. `web.config` の設定を環境に合わせて調整
 4. IIS の認証設定で「Windows 認証」を有効化し、「匿名認証」を無効化
 
+### 既存環境からのアップグレード
+
+このバージョンからイベントデータの保存先が変更されました。
+
+| | パス |
+|---|---|
+| 旧 | `chouseisan\data\` |
+| 新 | `chouseisan\App_Data\chouseisan\` |
+
+既存データを移行せずにアップグレードすると、全イベントが404（見つかりません）になります。  
+IISを停止した状態で以下のPowerShellスクリプトを実行してください。
+
+```powershell
+$site    = "C:\inetpub\wwwroot\chouseisan"   # 実際のパスに変更してください
+$oldPath = "$site\data"
+$newPath = "$site\App_Data\chouseisan"
+
+New-Item -ItemType Directory -Force -Path $newPath
+Get-ChildItem "$oldPath\evt*.json" | Copy-Item -Destination $newPath
+```
+
+移行後の確認事項:
+
+1. `$newPath` 内のJSONファイル数が `$oldPath` と一致すること
+2. IISアプリプールユーザーに `App_Data\` への読み書き権限があること
+3. IIS起動後、既存の共有URLでイベントを読み込めること
+4. 確認後、旧 `data\` ディレクトリを削除すること（Webから直接取得できる状態を解消するため）
+
 ### jQuery
 `./common/jquery-3.6.0.min.js` を別途配置してください（`default.aspx` からの相対パスで参照しています）。
 
