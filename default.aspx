@@ -178,7 +178,9 @@
                 string path = dataDir + id + ".json";
                 if (File.Exists(path))
                 {
-                    string json = File.ReadAllText(path, Encoding.UTF8);
+                    string json;
+                    try { json = File.ReadAllText(path, Encoding.UTF8); }
+                    catch (FileNotFoundException) { throw new AppException("Not found.", 404); }
                     var eventData = serializer.Deserialize<EventData>(json);
                     bool isOwner = !string.IsNullOrEmpty(eventData.creatorLoginId) &&
                                    string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase);
@@ -495,15 +497,16 @@
             window.location.href = "default.aspx";
             return;
         }
+        var serverMsg = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : null;
         if (xhr.status === 401) {
-            alert("ログインユーザーが変更されました。ページを再読み込みします。");
+            alert(serverMsg || "認証エラーが発生しました。ページを再読み込みしてください。");
             window.location.reload();
             return;
         }
         if (xhr.status === 403) {
-            alert("セッションが期限切れ、または操作権限がありません。ページを再読み込みしてください。");
+            alert(serverMsg || "セッションが期限切れ、または操作権限がありません。ページを再読み込みしてください。");
         } else if (xhr.status >= 400) {
-            alert("通信中にエラーが発生しました（" + xhr.status + "）。");
+            alert(serverMsg || "通信中にエラーが発生しました（" + xhr.status + "）。");
         }
     });
 
