@@ -349,7 +349,23 @@
                             }
                         }
                         catch { }
-                        File.AppendAllText(logPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
+                        bool appended = false;
+                        try
+                        {
+                            File.AppendAllText(logPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
+                            appended = true;
+                        }
+                        catch { }
+                        if (!appended)
+                        {
+                            try
+                            {
+                                string emergencyPath = Path.Combine(appDataPath,
+                                    "chouseisan_error_emergency_" + System.Diagnostics.Process.GetCurrentProcess().Id + ".log");
+                                File.AppendAllText(emergencyPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
+                            }
+                            catch { }
+                        }
                     }
                 }
                 catch { }
@@ -363,7 +379,9 @@
 
     private bool IsValidEventId(string id)
     {
-        return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt[0-9a-f]{32}$");
+        return !string.IsNullOrEmpty(id) &&
+            (System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt[0-9a-f]{32}$") ||
+             System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt\d{17}$"));
     }
 
     private string GetSafeRequestId()
