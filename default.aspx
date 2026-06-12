@@ -51,6 +51,10 @@
     // =============================================================================
     protected void Page_Load(object sender, EventArgs e)
     {
+        Response.Cache.SetCacheability(HttpCacheability.NoCache);
+        Response.Cache.SetNoStore();
+        Response.Cache.SetExpires(DateTime.UtcNow.AddYears(-1));
+
         string mode = Request.QueryString["mode"];
 
         // ---------------------------------------------------------
@@ -106,7 +110,6 @@
         // ---------------------------------------------------------
         Response.ContentType = "application/json";
         Response.ContentEncoding = Encoding.UTF8;
-        Response.Cache.SetCacheability(HttpCacheability.NoCache);
 
         var serializer = new JavaScriptSerializer();
 
@@ -362,7 +365,9 @@
                             {
                                 string emergencyPath = Path.Combine(appDataPath,
                                     "chouseisan_error_emergency_" + System.Diagnostics.Process.GetCurrentProcess().Id + ".log");
-                                File.AppendAllText(emergencyPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
+                                var efi = new System.IO.FileInfo(emergencyPath);
+                                if (!efi.Exists || efi.Length < 5 * 1024 * 1024)
+                                    File.AppendAllText(emergencyPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
                             }
                             catch { }
                         }
