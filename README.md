@@ -108,23 +108,54 @@ chouseisan/
 | 新 | `chouseisan\App_Data\chouseisan\` |
 
 既存データを移行せずにアップグレードすると、全イベントが404（見つかりません）になります。  
-IISを停止した状態で以下のPowerShellスクリプトを実行してください。
+IISを停止した状態で以下の手順を実施してください。
+
+**ステップ1: バックアップと移行**
 
 ```powershell
-$site    = "C:\inetpub\wwwroot\chouseisan"   # 実際のパスに変更してください
-$oldPath = "$site\data"
-$newPath = "$site\App_Data\chouseisan"
+$site       = "C:\inetpub\wwwroot\chouseisan"   # 実際のパスに変更してください
+$oldPath    = "$site\data"
+$newPath    = "$site\App_Data\chouseisan"
+$backupPath = "$site\data_backup_$(Get-Date -Format yyyyMMddHHmmss)"
 
+# 旧データをバックアップ
+Copy-Item $oldPath $backupPath -Recurse
+
+# 新保存先へコピー
 New-Item -ItemType Directory -Force -Path $newPath
 Get-ChildItem "$oldPath\evt*.json" | Copy-Item -Destination $newPath
 ```
 
-移行後の確認事項:
+**ステップ2: ハッシュ検証**
 
-1. `$newPath` 内のJSONファイル数が `$oldPath` と一致すること
-2. IISアプリプールユーザーに `App_Data\` への読み書き権限があること
-3. IIS起動後、既存の共有URLでイベントを読み込めること
-4. 確認後、旧 `data\` ディレクトリを削除すること（Webから直接取得できる状態を解消するため）
+```powershell
+$oldFiles = Get-ChildItem "$oldPath\evt*.json" | Sort-Object Name
+$newFiles = Get-ChildItem "$newPath\evt*.json" | Sort-Object Name
+
+if ($oldFiles.Count -ne $newFiles.Count) {
+    Write-Error "ファイル数不一致: 旧=$($oldFiles.Count) 新=$($newFiles.Count)"
+} else {
+    $mismatch = 0
+    for ($i = 0; $i -lt $oldFiles.Count; $i++) {
+        $h1 = (Get-FileHash $oldFiles[$i].FullName).Hash
+        $h2 = (Get-FileHash $newFiles[$i].FullName).Hash
+        if ($h1 -ne $h2) { Write-Warning "不一致: $($oldFiles[$i].Name)"; $mismatch++ }
+    }
+    if ($mismatch -eq 0) { Write-Host "検証OK: 全ファイル一致" }
+}
+```
+
+**ステップ3: IIS起動後の確認**
+
+1. IISアプリプールユーザーに `App_Data\` への読み書き権限があること
+2. 既存の共有URLでイベントを読み込めること
+
+**ステップ4: 旧ディレクトリの処置**
+
+ハッシュ検証・動作確認後も、旧 `data\` ディレクトリはすぐに削除せず、一定期間バックアップとして保持することを推奨します。  
+当面の間はIISの認可設定でアクセスを拒否してWebからの直接取得を防いでください。
+
+**ロールバック手順**: 問題が発生した場合は、IISを停止して `$newPath` の内容を削除し、`$backupPath` の内容を `$oldPath` へコピーしてから旧バージョンを再デプロイしてください。
 
 ### jQuery
 `./common/jquery-3.6.0.min.js` を別途配置してください（`default.aspx` からの相対パスで参照しています）。

@@ -307,14 +307,19 @@
         catch (Exception ex)
         {
             if (Response.StatusCode == 200) Response.StatusCode = 500;
-            string safeEx = SanitizeException(ex.ToString());
-            if (safeEx.Length > 4000) safeEx = safeEx.Substring(0, 4000) + "...[truncated]";
-            string logMsg = string.Format(
-                "Chouseisan: mode={0} id={1} user={2}\r\n{3}",
-                SanitizeLogValue(mode),
-                SanitizeLogValue(Request.QueryString["id"] ?? Request.Form["id"] ?? "(none)"),
-                SanitizeLogValue(User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)"),
-                safeEx);
+            string logMsg;
+            try
+            {
+                string safeEx = SanitizeException(ex.ToString());
+                if (safeEx.Length > 4000) safeEx = safeEx.Substring(0, 4000) + "...[truncated]";
+                logMsg = string.Format(
+                    "Chouseisan: mode={0} id={1} user={2}\r\n{3}",
+                    SanitizeLogValue(mode),
+                    SanitizeLogValue(GetSafeRequestId()),
+                    SanitizeLogValue(User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)"),
+                    safeEx);
+            }
+            catch { logMsg = "Chouseisan: ログメッセージ構築に失敗しました。"; }
             bool eventLogged = false;
             try
             {
@@ -330,6 +335,13 @@
                     string logPath = Server.MapPath("~/App_Data/chouseisan_error.log");
                     lock (_logLock)
                     {
+                        var fi = new System.IO.FileInfo(logPath);
+                        if (fi.Exists && fi.Length > 5 * 1024 * 1024)
+                        {
+                            string rotated = logPath + ".1";
+                            if (File.Exists(rotated)) File.Delete(rotated);
+                            File.Move(logPath, rotated);
+                        }
                         File.AppendAllText(logPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
                     }
                 }
@@ -345,6 +357,12 @@
     private bool IsValidEventId(string id)
     {
         return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt[0-9a-f]{32}$");
+    }
+
+    private string GetSafeRequestId()
+    {
+        try { return Request.QueryString["id"] ?? Request.Form["id"] ?? "(none)"; }
+        catch { return "(unavailable)"; }
     }
 
     private string SanitizeLogValue(string value)
