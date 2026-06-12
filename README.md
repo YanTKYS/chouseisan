@@ -56,6 +56,7 @@
   "dates": ["5/20 10:00", "5/20 13:00", "5/21 10:00"],
   "participants": [
     {
+      "loginId": "DOMAIN\\yamada",
       "name": "山田 太郎",
       "answers": [2, 1, 0],
       "comment": "午後は外出予定"
