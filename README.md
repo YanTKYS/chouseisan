@@ -15,7 +15,7 @@
 |------|------|
 | サーバーサイド | ASP.NET Web Forms (C#) / .NET Framework 4.7 |
 | フロントエンド | HTML / CSS / jQuery 3.6.0 |
-| データ保存 | JSONファイル (`../chouseisan/data/`) |
+| データ保存 | JSONファイル (`App_Data/chouseisan/`) |
 | 認証 | Windows認証 + Active Directory (`System.DirectoryServices.AccountManagement`) |
 
 ## 機能
@@ -46,7 +46,7 @@
 
 ## データ構造
 
-イベントデータは `data/{eventId}.json` として保存されます。
+イベントデータは `App_Data/chouseisan/{eventId}.json` として保存されます。
 
 ```json
 {
@@ -76,10 +76,12 @@
 
 ```
 chouseisan/
-├── default.aspx       # アプリ本体（サーバーサイドC# + HTML/CSS/JS）
-├── web.config         # ASP.NET設定（.NET 4.7、AD参照設定）
-└── data/              # イベントデータ保存ディレクトリ（自動生成）
-    └── evt*.json
+├── default.aspx            # アプリ本体（サーバーサイドC# + HTML/CSS/JS）
+├── web.config              # ASP.NET設定（.NET 4.7、AD参照設定）
+└── App_Data/
+    ├── chouseisan/         # イベントデータ保存ディレクトリ（自動生成）
+    │   └── evt*.json
+    └── chouseisan_error.log  # EventLog/Trace失敗時のフォールバックログ（自動生成）
 ```
 
 ## セットアップ
@@ -92,7 +94,7 @@ chouseisan/
 
 ### 手順
 1. IISのサイトディレクトリにファイルを配置
-2. `data/` ディレクトリへの書き込み権限をIISアプリプールユーザーに付与
+2. `App_Data/` ディレクトリへの書き込み権限をIISアプリプールユーザーに付与
 3. `web.config` の設定を環境に合わせて調整
 4. IIS の認証設定で「Windows 認証」を有効化し、「匿名認証」を無効化
 
@@ -110,7 +112,7 @@ chouseisan/
 ## 注意事項
 
 - `customErrors mode="RemoteOnly"` が設定済みです。本番環境でも詳細なエラー情報がリモートクライアントに表示されることはありません
-- データファイルはWebルートの親ディレクトリ (`../chouseisan/data/`) に保存されます。IISの設定でWebから直接アクセスできないパスにすることを確認してください
+- データファイルは `App_Data/chouseisan/` に保存されます。ASP.NET の `App_Data` はフレームワークレベルでHTTPアクセスが拒否されるため、JSONに含まれるWindowsログインIDが直接取得されることはありません
 - **IIS Web Gardenは無効（ワーカープロセス数=1）にしてください。** ファイルベースのデータ保存を採用しているため、複数ワーカープロセスによる同時書き込みで更新が失われる場合があります
 - アプリ内のロックオブジェクトはイベント削除時に解放されます。削除せずに大量のイベントを作成し続ける場合は、定期的にIISアプリケーションプールをリサイクルしてメモリを解放してください
 - 作成イベント数・JSONファイル数に上限はありません。長期運用ではデータディレクトリのディスク使用量を定期的に監視してください。古いイベントは手動または定期バッチで削除することを推奨します
