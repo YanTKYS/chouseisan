@@ -140,6 +140,9 @@
                 }
             }
 
+            if (mode != "create" && mode != "load" && mode != "update" && mode != "lock" && mode != "delete")
+                throw new AppException("Unknown mode.", 400);
+
             string dataDir = Server.MapPath("../chouseisan/data/");
             if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
 
@@ -238,7 +241,10 @@
                     if (person != null) { person.name = name; person.answers = answers; person.comment = comment; }
                     else
                     {
-                        if (eventData.participants.Count >= 100)
+                        int activeCount = 0;
+                        foreach (var p2 in eventData.participants)
+                            if (!string.IsNullOrEmpty(p2.loginId)) activeCount++;
+                        if (activeCount >= 100)
                             throw new AppException("参加者数の上限（100名）に達しています。", 400);
                         eventData.participants.Add(new Participant { loginId = loginId, name = name, answers = answers, comment = comment });
                     }
@@ -285,10 +291,6 @@
                     _fileLocks.TryRemove(id, out removedLock);
                     Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
-            }
-            else
-            {
-                throw new AppException("Unknown mode.", 400);
             }
         }
         catch (AppException ex)
@@ -491,6 +493,11 @@
         if (xhr.status === 404 && settings.url && settings.url.indexOf("mode=load") !== -1) {
             alert("イベントが見つかりません。削除された可能性があります。");
             window.location.href = "default.aspx";
+            return;
+        }
+        if (xhr.status === 401) {
+            alert("ログインユーザーが変更されました。ページを再読み込みします。");
+            window.location.reload();
             return;
         }
         if (xhr.status === 403) {
