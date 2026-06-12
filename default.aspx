@@ -332,15 +332,18 @@
                 try { System.Diagnostics.Trace.TraceError(logMsg); } catch { }
                 try
                 {
-                    string logPath = Server.MapPath("~/App_Data/chouseisan_error.log");
+                    string appDataPath = Server.MapPath("~/App_Data/");
+                    Directory.CreateDirectory(appDataPath);
+                    string logPath = Path.Combine(appDataPath, "chouseisan_error.log");
                     lock (_logLock)
                     {
                         var fi = new System.IO.FileInfo(logPath);
                         if (fi.Exists && fi.Length > 5 * 1024 * 1024)
                         {
-                            string rotated = logPath + ".1";
-                            if (File.Exists(rotated)) File.Delete(rotated);
-                            File.Move(logPath, rotated);
+                            if (File.Exists(logPath + ".3")) File.Delete(logPath + ".3");
+                            if (File.Exists(logPath + ".2")) File.Move(logPath + ".2", logPath + ".3");
+                            if (File.Exists(logPath + ".1")) File.Move(logPath + ".1", logPath + ".2");
+                            File.Move(logPath, logPath + ".1");
                         }
                         File.AppendAllText(logPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
                     }
