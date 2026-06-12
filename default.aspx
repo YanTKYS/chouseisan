@@ -337,14 +337,18 @@
                     string logPath = Path.Combine(appDataPath, "chouseisan_error.log");
                     lock (_logLock)
                     {
-                        var fi = new System.IO.FileInfo(logPath);
-                        if (fi.Exists && fi.Length > 5 * 1024 * 1024)
+                        try
                         {
-                            if (File.Exists(logPath + ".3")) File.Delete(logPath + ".3");
-                            if (File.Exists(logPath + ".2")) File.Move(logPath + ".2", logPath + ".3");
-                            if (File.Exists(logPath + ".1")) File.Move(logPath + ".1", logPath + ".2");
-                            File.Move(logPath, logPath + ".1");
+                            var fi = new System.IO.FileInfo(logPath);
+                            if (fi.Exists && fi.Length > 5 * 1024 * 1024)
+                            {
+                                if (File.Exists(logPath + ".3")) File.Delete(logPath + ".3");
+                                if (File.Exists(logPath + ".2")) File.Move(logPath + ".2", logPath + ".3");
+                                if (File.Exists(logPath + ".1")) File.Move(logPath + ".1", logPath + ".2");
+                                File.Move(logPath, logPath + ".1");
+                            }
                         }
+                        catch { }
                         File.AppendAllText(logPath, DateTime.Now.ToString("o") + "\r\n" + logMsg + "\r\n---\r\n", Encoding.UTF8);
                     }
                 }
