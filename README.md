@@ -123,16 +123,18 @@ IISを停止した状態で以下の手順を実施してください。
 ```powershell
 $ErrorActionPreference = "Stop"
 
-$site       = "C:\inetpub\wwwroot\chouseisan"   # 実際のパスに変更してください
-$oldPath    = "$site\data"
-$newPath    = "$site\App_Data\chouseisan"
-# バックアップはApp_Data配下へ保存（最低限Webからの直接取得を防止）
-# 推奨: サイトディレクトリ外・別ディスクへ保存し、IISアプリプールユーザーの書き込みを禁止する
-# 例: $backupPath = "D:\chouseisan-backups\data_backup_$(Get-Date -Format yyyyMMddHHmmss)"
-$backupPath = "$site\App_Data\data_backup_$(Get-Date -Format yyyyMMddHHmmss)"
+$site    = "C:\inetpub\wwwroot\chouseisan"   # 実際のパスに変更してください
+$oldPath = "$site\data"
+$newPath = "$site\App_Data\chouseisan"
+
+# バックアップはサイトディレクトリ外・別ディスクへ保存し、IISアプリプールユーザーに書き込みを許可しないことを推奨します
+# App_Data配下は代替案です（HTTP公開は防止されますが、本番データと同じ障害範囲になります）:
+#   $backupRoot = "$site\App_Data"
+$backupRoot = "D:\chouseisan-backups"   # 実際のパスに変更してください
+New-Item -ItemType Directory -Force -Path $backupRoot
+$backupPath = "$backupRoot\data_backup_$(Get-Date -Format yyyyMMddHHmmss)"
 
 # 旧データをバックアップ
-New-Item -ItemType Directory -Force -Path "$site\App_Data"
 Copy-Item $oldPath $backupPath -Recurse -ErrorAction Stop
 
 # 新保存先へコピー
@@ -140,7 +142,7 @@ New-Item -ItemType Directory -Force -Path $newPath
 Get-ChildItem "$oldPath\evt*.json" | Copy-Item -Destination $newPath -ErrorAction Stop
 ```
 
-**ステップ2: ハッシュ検証**
+**ステップ2: ハッシュ検証と旧形式ID確認**
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -163,6 +165,15 @@ for ($i = 0; $i -lt $oldFiles.Count; $i++) {
     }
 }
 Write-Host "検証OK: 全ファイル一致"
+
+# 旧形式イベントID（evt + 17桁数字）の件数を表示
+$legacyFiles = Get-ChildItem "$newPath\evt*.json" | Where-Object { $_.BaseName -match '^evt\d{17}$' }
+if ($legacyFiles.Count -gt 0) {
+    Write-Host "旧形式イベントID: $($legacyFiles.Count) 件（閲覧・回答は可能、移行後に動作確認を推奨）"
+    $legacyFiles | ForEach-Object { Write-Host "  $($_.Name)" }
+} else {
+    Write-Host "旧形式イベントID: なし"
+}
 ```
 
 **ステップ3: IIS起動後の確認**
