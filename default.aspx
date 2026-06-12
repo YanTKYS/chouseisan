@@ -106,15 +106,25 @@
         Response.ContentEncoding = Encoding.UTF8;
         Response.Cache.SetCacheability(HttpCacheability.NoCache);
 
-        string dataDir = Server.MapPath("../chouseisan/data/");
-        if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
-
         var serializer = new JavaScriptSerializer();
 
         try
         {
             if (!User.Identity.IsAuthenticated || string.IsNullOrEmpty(User.Identity.Name))
                 throw new AppException("認証が必要です。", 401);
+
+            string apiLoginId = User.Identity.Name;
+            string cachedApiLoginId = Session["UserLoginId"] as string;
+            if (string.IsNullOrEmpty(cachedApiLoginId))
+            {
+                Session["UserLoginId"] = apiLoginId;
+            }
+            else if (!string.Equals(apiLoginId, cachedApiLoginId, StringComparison.OrdinalIgnoreCase))
+            {
+                Session["UserDisplayName"] = null;
+                Session["CsrfToken"] = null;
+                throw new AppException("ユーザーが変更されました。ページを再読み込みしてください。", 401);
+            }
 
             if (mode == "create" || mode == "update" || mode == "lock" || mode == "delete")
             {
@@ -129,6 +139,9 @@
                     throw new AppException("CSRFトークンが無効です。", 403);
                 }
             }
+
+            string dataDir = Server.MapPath("../chouseisan/data/");
+            if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
 
             if (mode == "create")
             {
@@ -167,12 +180,6 @@
                     bool isOwner = !string.IsNullOrEmpty(eventData.creatorLoginId) &&
                                    string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase);
                     string myLoginId = User.Identity.Name;
-                    string adDisplayName = Session["UserDisplayName"] as string;
-                    int legacyNameCount = 0;
-                    if (!string.IsNullOrEmpty(adDisplayName))
-                        foreach (var p2 in eventData.participants)
-                            if (string.IsNullOrEmpty(p2.loginId) && string.Equals(p2.name, adDisplayName, StringComparison.OrdinalIgnoreCase))
-                                legacyNameCount++;
                     var safeParticipants = new List<object>();
                     foreach (var p in eventData.participants)
                     {
@@ -181,7 +188,6 @@
                             answers = p.answers,
                             comment = p.comment,
                             isMe = (!string.IsNullOrEmpty(p.loginId) && string.Equals(p.loginId, myLoginId, StringComparison.OrdinalIgnoreCase))
-                                   || (string.IsNullOrEmpty(p.loginId) && legacyNameCount == 1 && !string.IsNullOrEmpty(adDisplayName) && string.Equals(p.name, adDisplayName, StringComparison.OrdinalIgnoreCase))
                         });
                     }
                     Response.Write(serializer.Serialize(new {
@@ -229,19 +235,13 @@
 
                     string loginId = User.Identity.Name;
                     var person = eventData.participants.Find(p => string.Equals(p.loginId, loginId, StringComparison.OrdinalIgnoreCase));
-                    if (person == null)
-                    {
-                        string legacyName = Session["UserDisplayName"] as string;
-                        if (!string.IsNullOrEmpty(legacyName))
-                        {
-                            var legacyMatches = eventData.participants.FindAll(p =>
-                                string.IsNullOrEmpty(p.loginId) &&
-                                string.Equals(p.name, legacyName, StringComparison.OrdinalIgnoreCase));
-                            if (legacyMatches.Count == 1) { legacyMatches[0].loginId = loginId; person = legacyMatches[0]; }
-                        }
-                    }
                     if (person != null) { person.name = name; person.answers = answers; person.comment = comment; }
-                    else { eventData.participants.Add(new Participant { loginId = loginId, name = name, answers = answers, comment = comment }); }
+                    else
+                    {
+                        if (eventData.participants.Count >= 100)
+                            throw new AppException("参加者数の上限（100名）に達しています。", 400);
+                        eventData.participants.Add(new Participant { loginId = loginId, name = name, answers = answers, comment = comment });
+                    }
 
                     SaveJson(path, eventData);
                 }
