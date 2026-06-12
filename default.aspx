@@ -305,17 +305,24 @@
         catch (Exception ex)
         {
             if (Response.StatusCode == 200) Response.StatusCode = 500;
+            string logMsg = string.Format(
+                "Chouseisan: mode={0} id={1} user={2}\r\n{3}",
+                SanitizeLogValue(mode),
+                SanitizeLogValue(Request.QueryString["id"] ?? Request.Form["id"] ?? "(none)"),
+                User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)",
+                ex.ToString());
+            bool logged = false;
             try
             {
-                string logMsg = string.Format(
-                    "Chouseisan: mode={0} id={1} user={2}\r\n{3}",
-                    mode,
-                    Request.QueryString["id"] ?? Request.Form["id"] ?? "(none)",
-                    User.Identity.IsAuthenticated ? User.Identity.Name : "(unauthenticated)",
-                    ex.ToString());
                 System.Diagnostics.EventLog.WriteEntry("Application", logMsg, System.Diagnostics.EventLogEntryType.Error);
+                logged = true;
             }
             catch { }
+            if (!logged)
+            {
+                try { System.Diagnostics.Trace.TraceError(logMsg); }
+                catch { }
+            }
             Response.Write(serializer.Serialize(new { status = "error", msg = "サーバー処理中にエラーが発生しました。" }));
         }
         Response.Flush();
@@ -326,6 +333,16 @@
     private bool IsValidEventId(string id)
     {
         return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt[0-9a-f]{32}$");
+    }
+
+    private string SanitizeLogValue(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "(empty)";
+        var sb = new StringBuilder();
+        foreach (char c in value)
+            if (c >= 0x20) sb.Append(c);
+        string result = sb.ToString();
+        return result.Length > 100 ? result.Substring(0, 100) + "..." : result;
     }
 
     private void SaveJson(string path, object data)
@@ -526,8 +543,9 @@
         var serverMsg = xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : null;
         if (xhr.status === 401) {
             alert(serverMsg || "認証エラーが発生しました。ページを再読み込みしてください。");
-            if (!sessionStorage.getItem('_authReloaded')) {
-                sessionStorage.setItem('_authReloaded', '1');
+            var lastReload = parseInt(sessionStorage.getItem('_authReloadTime') || '0');
+            if (Date.now() - lastReload > 10000) {
+                sessionStorage.setItem('_authReloadTime', String(Date.now()));
                 window.location.reload();
             }
             return;
