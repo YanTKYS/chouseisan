@@ -60,28 +60,38 @@
                 Session["CsrfToken"] = Guid.NewGuid().ToString("N");
             CsrfToken = (string)Session["CsrfToken"];
 
+            string currentLoginId = User.Identity.Name;
+            string cachedLoginId = Session["UserLoginId"] as string;
+            if (!string.IsNullOrEmpty(cachedLoginId) &&
+                !string.Equals(currentLoginId, cachedLoginId, StringComparison.OrdinalIgnoreCase))
+            {
+                Session["UserDisplayName"] = null;
+                Session["CsrfToken"] = Guid.NewGuid().ToString("N");
+                CsrfToken = (string)Session["CsrfToken"];
+            }
+            Session["UserLoginId"] = currentLoginId;
+
             if (Session["UserDisplayName"] != null)
             {
                 UserDisplayName = (string)Session["UserDisplayName"];
             }
             else
             {
-                string loginId = User.Identity.Name;
-                if (!string.IsNullOrEmpty(loginId))
+                if (!string.IsNullOrEmpty(currentLoginId))
                 {
                     try
                     {
                         using (PrincipalContext ctx = new PrincipalContext(ContextType.Domain))
                         {
-                            UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId);
+                            UserPrincipal user = UserPrincipal.FindByIdentity(ctx, currentLoginId);
                             UserDisplayName = (user != null && !string.IsNullOrEmpty(user.DisplayName))
                                 ? user.DisplayName
-                                : loginId;
+                                : currentLoginId;
                         }
                     }
                     catch
                     {
-                        UserDisplayName = loginId;
+                        UserDisplayName = currentLoginId;
                     }
                     Session["UserDisplayName"] = UserDisplayName;
                 }
@@ -143,7 +153,6 @@
                     creatorLoginId = User.Identity.Name
                 };
                 SaveJson(dataDir + eventId + ".json", newEvent);
-                _fileLocks.TryAdd(eventId, new object());
                 Response.Write(serializer.Serialize(new { status = "ok", id = eventId }));
             }
             else if (mode == "load")
@@ -159,6 +168,11 @@
                                    string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase);
                     string myLoginId = User.Identity.Name;
                     string adDisplayName = Session["UserDisplayName"] as string;
+                    int legacyNameCount = 0;
+                    if (!string.IsNullOrEmpty(adDisplayName))
+                        foreach (var p2 in eventData.participants)
+                            if (string.IsNullOrEmpty(p2.loginId) && string.Equals(p2.name, adDisplayName, StringComparison.OrdinalIgnoreCase))
+                                legacyNameCount++;
                     var safeParticipants = new List<object>();
                     foreach (var p in eventData.participants)
                     {
@@ -167,7 +181,7 @@
                             answers = p.answers,
                             comment = p.comment,
                             isMe = (!string.IsNullOrEmpty(p.loginId) && string.Equals(p.loginId, myLoginId, StringComparison.OrdinalIgnoreCase))
-                                   || (string.IsNullOrEmpty(p.loginId) && !string.IsNullOrEmpty(adDisplayName) && string.Equals(p.name, adDisplayName, StringComparison.OrdinalIgnoreCase))
+                                   || (string.IsNullOrEmpty(p.loginId) && legacyNameCount == 1 && !string.IsNullOrEmpty(adDisplayName) && string.Equals(p.name, adDisplayName, StringComparison.OrdinalIgnoreCase))
                         });
                     }
                     Response.Write(serializer.Serialize(new {
@@ -220,10 +234,10 @@
                         string legacyName = Session["UserDisplayName"] as string;
                         if (!string.IsNullOrEmpty(legacyName))
                         {
-                            var legacy = eventData.participants.Find(p =>
+                            var legacyMatches = eventData.participants.FindAll(p =>
                                 string.IsNullOrEmpty(p.loginId) &&
                                 string.Equals(p.name, legacyName, StringComparison.OrdinalIgnoreCase));
-                            if (legacy != null) { legacy.loginId = loginId; person = legacy; }
+                            if (legacyMatches.Count == 1) { legacyMatches[0].loginId = loginId; person = legacyMatches[0]; }
                         }
                     }
                     if (person != null) { person.name = name; person.answers = answers; person.comment = comment; }
@@ -271,6 +285,10 @@
                     _fileLocks.TryRemove(id, out removedLock);
                     Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
+            }
+            else
+            {
+                throw new AppException("Unknown mode.", 400);
             }
         }
         catch (AppException ex)
