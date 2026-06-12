@@ -113,36 +113,46 @@ IISを停止した状態で以下の手順を実施してください。
 **ステップ1: バックアップと移行**
 
 ```powershell
+$ErrorActionPreference = "Stop"
+
 $site       = "C:\inetpub\wwwroot\chouseisan"   # 実際のパスに変更してください
 $oldPath    = "$site\data"
 $newPath    = "$site\App_Data\chouseisan"
-$backupPath = "$site\data_backup_$(Get-Date -Format yyyyMMddHHmmss)"
+# バックアップはApp_Data配下へ保存（Webから直接取得されないよう保護）
+$backupPath = "$site\App_Data\data_backup_$(Get-Date -Format yyyyMMddHHmmss)"
 
 # 旧データをバックアップ
-Copy-Item $oldPath $backupPath -Recurse
+New-Item -ItemType Directory -Force -Path "$site\App_Data"
+Copy-Item $oldPath $backupPath -Recurse -ErrorAction Stop
 
 # 新保存先へコピー
 New-Item -ItemType Directory -Force -Path $newPath
-Get-ChildItem "$oldPath\evt*.json" | Copy-Item -Destination $newPath
+Get-ChildItem "$oldPath\evt*.json" | Copy-Item -Destination $newPath -ErrorAction Stop
 ```
 
 **ステップ2: ハッシュ検証**
 
 ```powershell
+$ErrorActionPreference = "Stop"
+
 $oldFiles = Get-ChildItem "$oldPath\evt*.json" | Sort-Object Name
 $newFiles = Get-ChildItem "$newPath\evt*.json" | Sort-Object Name
 
 if ($oldFiles.Count -ne $newFiles.Count) {
-    Write-Error "ファイル数不一致: 旧=$($oldFiles.Count) 新=$($newFiles.Count)"
-} else {
-    $mismatch = 0
-    for ($i = 0; $i -lt $oldFiles.Count; $i++) {
-        $h1 = (Get-FileHash $oldFiles[$i].FullName).Hash
-        $h2 = (Get-FileHash $newFiles[$i].FullName).Hash
-        if ($h1 -ne $h2) { Write-Warning "不一致: $($oldFiles[$i].Name)"; $mismatch++ }
-    }
-    if ($mismatch -eq 0) { Write-Host "検証OK: 全ファイル一致" }
+    throw "ファイル数不一致: 旧=$($oldFiles.Count) 新=$($newFiles.Count)"
 }
+
+for ($i = 0; $i -lt $oldFiles.Count; $i++) {
+    if ($oldFiles[$i].Name -ne $newFiles[$i].Name) {
+        throw "ファイル名不一致: 旧=$($oldFiles[$i].Name) 新=$($newFiles[$i].Name)"
+    }
+    $h1 = (Get-FileHash $oldFiles[$i].FullName).Hash
+    $h2 = (Get-FileHash $newFiles[$i].FullName).Hash
+    if ($h1 -ne $h2) {
+        throw "ハッシュ不一致: $($oldFiles[$i].Name)"
+    }
+}
+Write-Host "検証OK: 全ファイル一致"
 ```
 
 **ステップ3: IIS起動後の確認**
