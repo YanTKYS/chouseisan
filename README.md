@@ -81,47 +81,21 @@ chouseisan/
 ### 前提条件
 - IIS (Internet Information Services)
 - .NET Framework 4.7 以上
-- Windows認証が有効なActive Directory環境（任意）
+- **Windows認証が有効なActive Directory環境（必須）**  
+  Windows認証なしではイベントの作成・管理ができません。IISの認証設定で「Windows 認証」を有効化してください。
 
 ### 手順
 1. IISのサイトディレクトリにファイルを配置
 2. `data/` ディレクトリへの書き込み権限をIISアプリプールユーザーに付与
 3. `web.config` の設定を環境に合わせて調整
-4. Windows認証を使用する場合は IIS の認証設定で「Windows 認証」を有効化
+4. IIS の認証設定で「Windows 認証」を有効化し、「匿名認証」を無効化
 
 ### jQuery
 `./common/jquery-3.6.0.min.js` を別途配置してください（`default.aspx` からの相対パスで参照しています）。
 
-## 文字コードに関する運用注意事項
+## 文字コード
 
-### リポジトリと動作環境の文字コード
-
-| 場所 | 文字コード |
-|------|-----------|
-| このリポジトリ | UTF-8 |
-| IIS動作環境 | Shift-JIS |
-
-リポジトリ上のファイルはUTF-8で管理されています。IIS環境ではShift-JISが必要なため、**デプロイ前に管理者がファイルをShift-JISに変換**してください。
-
-### 変換手順（PowerShell）
-
-```powershell
-$src  = "default.aspx"        # UTF-8のファイル
-$dest = "default_sjis.aspx"   # 変換後ファイル（IISに配置するもの）
-
-$content = Get-Content $src -Encoding UTF8 -Raw
-[System.IO.File]::WriteAllText(
-    (Resolve-Path $dest).Path,
-    $content,
-    [System.Text.Encoding]::GetEncoding("shift_jis")
-)
-```
-
-または `web.config` を変更して対応する方法もあります（後述）。
-
-### web.config でUTF-8のまま動作させる場合（代替案）
-
-`web.config` の `<system.web>` に以下を追加するとIISがUTF-8として処理します。ただし動作確認が必要です。
+リポジトリおよびIIS動作環境ともに **UTF-8** で統一されています。`web.config` に以下の設定が含まれているため、デプロイ時の文字コード変換は不要です。
 
 ```xml
 <globalization fileEncoding="utf-8" requestEncoding="utf-8" responseEncoding="utf-8" />
@@ -129,5 +103,5 @@ $content = Get-Content $src -Encoding UTF8 -Raw
 
 ## 注意事項
 
-- `web.config` の `<customErrors mode="Off"/>` は本番環境では `RemoteOnly` または `On` に変更することを推奨します
+- `customErrors mode="RemoteOnly"` が設定済みです。本番環境でも詳細なエラー情報がリモートクライアントに表示されることはありません
 - データファイルはWebルートの親ディレクトリ (`../chouseisan/data/`) に保存されます。IISの設定でWebから直接アクセスできないパスにすることを確認してください

@@ -34,6 +34,11 @@
         public string comment { get; set; }
     }
 
+    public class AppException : Exception
+    {
+        public AppException(string message) : base(message) {}
+    }
+
     // =============================================================================
     // バックエンド処理
     // =============================================================================
@@ -99,26 +104,28 @@
                 {
                     Response.StatusCode = 405;
                     Response.AddHeader("Allow", "POST");
-                    throw new Exception("Method Not Allowed");
+                    throw new AppException("Method Not Allowed");
                 }
                 string reqToken = Request.Headers["X-CSRF-Token"];
                 if (string.IsNullOrEmpty(reqToken) || reqToken != (string)Session["CsrfToken"])
                 {
                     Response.StatusCode = 403;
-                    throw new Exception("Invalid CSRF token.");
+                    throw new AppException("CSRFトークンが無効です。");
                 }
             }
 
             if (mode == "create")
             {
                 string title = Request.Form["title"];
-                if (string.IsNullOrEmpty(title) || title.Length > 100) throw new Exception("イベント名が無効です。");
+                if (string.IsNullOrEmpty(title) || title.Length > 100) throw new AppException("イベント名が無効です。");
                 string rawDates = Request.Form["dates"];
-                if (string.IsNullOrEmpty(rawDates)) throw new Exception("入力不足");
+                if (string.IsNullOrEmpty(rawDates)) throw new AppException("入力不足");
                 var dateList = new List<string>(rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries));
                 if (dateList.Count == 0 || dateList.Count > 31 || dateList.Exists(d => d.Length > 50))
-                    throw new Exception("候補日の形式が不正です。");
+                    throw new AppException("候補日の形式が不正です。");
 
+                if (string.IsNullOrEmpty(User.Identity.Name))
+                    throw new AppException("このシステムはWindows認証が必要です。管理者にお問い合わせください。");
                 string eventId = "evt" + Guid.NewGuid().ToString("N");
                 var newEvent = new EventData
                 {
@@ -135,7 +142,7 @@
             else if (mode == "load")
             {
                 string id = Request.QueryString["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
+                if (!IsValidEventId(id)) throw new AppException("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 if (File.Exists(path))
                 {
@@ -160,28 +167,29 @@
             else if (mode == "update")
             {
                 string id = Request.Form["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
+                if (!IsValidEventId(id)) throw new AppException("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (!File.Exists(path)) throw new Exception("データなし");
+                    if (!File.Exists(path)) throw new AppException("データなし");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
 
-                    if (eventData.locked) throw new Exception("このイベントは既に締め切られています。");
+                    if (eventData.locked) throw new AppException("このイベントは既に締め切られています。");
 
                     string name = Request.Form["name"];
-                    if (string.IsNullOrEmpty(name) || name.Length > 50) throw new Exception("名前が無効です。");
+                    if (string.IsNullOrEmpty(name) || name.Length > 50) throw new AppException("名前が無効です。");
                     string ansStr = Request.Form["answers"];
                     var answers = new List<int>();
                     foreach (var s in ansStr.Split(','))
                     {
-                        if (!int.TryParse(s.Trim(), out int v) || v < 0 || v > 2) throw new Exception("回答値が不正です。");
+                        int v;
+                        if (!int.TryParse(s.Trim(), out v) || v < 0 || v > 2) throw new AppException("回答値が不正です。");
                         answers.Add(v);
                     }
-                    if (answers.Count != eventData.dates.Count) throw new Exception("回答数が候補日数と一致しません。");
+                    if (answers.Count != eventData.dates.Count) throw new AppException("回答数が候補日数と一致しません。");
                     string comment = Request.Form["comment"] ?? "";
-                    if (comment.Length > 200) throw new Exception("コメントが長すぎます。");
+                    if (comment.Length > 200) throw new AppException("コメントが長すぎます。");
 
                     var person = eventData.participants.Find(p => p.name == name);
                     if (person != null) { person.answers = answers; person.comment = comment; }
@@ -194,16 +202,19 @@
             else if (mode == "lock")
             {
                 string id = Request.Form["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
+                if (!IsValidEventId(id)) throw new AppException("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (!File.Exists(path)) throw new Exception("Not found.");
+                    if (!File.Exists(path)) throw new AppException("Not found.");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
                     if (string.IsNullOrEmpty(eventData.creatorLoginId) ||
                         eventData.creatorLoginId != User.Identity.Name)
-                        throw new Exception("Unauthorized.");
+                    {
+                        Response.StatusCode = 403;
+                        throw new AppException("この操作を行う権限がありません。");
+                    }
                     eventData.locked = true;
                     SaveJson(path, eventData);
                     Response.Write(serializer.Serialize(new { status = "ok" }));
@@ -212,24 +223,32 @@
             else if (mode == "delete")
             {
                 string id = Request.Form["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
+                if (!IsValidEventId(id)) throw new AppException("Invalid event ID.");
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (!File.Exists(path)) throw new Exception("Not found.");
+                    if (!File.Exists(path)) throw new AppException("Not found.");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
                     if (string.IsNullOrEmpty(eventData.creatorLoginId) ||
                         eventData.creatorLoginId != User.Identity.Name)
-                        throw new Exception("Unauthorized.");
+                    {
+                        Response.StatusCode = 403;
+                        throw new AppException("この操作を行う権限がありません。");
+                    }
                     File.Delete(path);
                     Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
             }
         }
-        catch (Exception ex)
+        catch (AppException ex)
         {
             Response.Write(serializer.Serialize(new { status = "error", msg = ex.Message }));
+        }
+        catch (Exception)
+        {
+            if (Response.StatusCode == 200) Response.StatusCode = 500;
+            Response.Write(serializer.Serialize(new { status = "error", msg = "サーバー処理中にエラーが発生しました。" }));
         }
         Response.Flush();
         Response.SuppressContent = true;
@@ -245,12 +264,20 @@
     {
         var serializer = new JavaScriptSerializer();
         string json = serializer.Serialize(data);
-        string tempPath = path + ".tmp";
-        File.WriteAllText(tempPath, json, Encoding.UTF8);
-        if (File.Exists(path))
-            File.Replace(tempPath, path, null);
-        else
-            File.Move(tempPath, path);
+        string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(tempPath, json, Encoding.UTF8);
+            if (File.Exists(path))
+                File.Replace(tempPath, path, null);
+            else
+                File.Move(tempPath, path);
+            tempPath = null;
+        }
+        finally
+        {
+            if (tempPath != null && File.Exists(tempPath)) File.Delete(tempPath);
+        }
     }
 </script>
 
@@ -328,7 +355,7 @@
         
         <!-- ログイン情報表示エリア -->
         <div class="login-info">
-            Login: <strong><%= UserDisplayName %></strong>
+            Login: <strong><%= HttpUtility.HtmlEncode(UserDisplayName) %></strong>
         </div>
     </header>
 
