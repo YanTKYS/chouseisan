@@ -103,6 +103,9 @@
 
         try
         {
+            if (!User.Identity.IsAuthenticated || string.IsNullOrEmpty(User.Identity.Name))
+                throw new AppException("認証が必要です。", 401);
+
             if (mode == "create" || mode == "update" || mode == "lock" || mode == "delete")
             {
                 if (Request.HttpMethod != "POST")
@@ -140,6 +143,7 @@
                     creatorLoginId = User.Identity.Name
                 };
                 SaveJson(dataDir + eventId + ".json", newEvent);
+                _fileLocks.TryAdd(eventId, new object());
                 Response.Write(serializer.Serialize(new { status = "ok", id = eventId }));
             }
             else if (mode == "load")
@@ -152,8 +156,9 @@
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
                     bool isOwner = !string.IsNullOrEmpty(eventData.creatorLoginId) &&
-                                   eventData.creatorLoginId == User.Identity.Name;
+                                   string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase);
                     string myLoginId = User.Identity.Name;
+                    string adDisplayName = Session["UserDisplayName"] as string;
                     var safeParticipants = new List<object>();
                     foreach (var p in eventData.participants)
                     {
@@ -161,7 +166,8 @@
                             name = p.name,
                             answers = p.answers,
                             comment = p.comment,
-                            isMe = (!string.IsNullOrEmpty(p.loginId) && p.loginId == myLoginId)
+                            isMe = (!string.IsNullOrEmpty(p.loginId) && string.Equals(p.loginId, myLoginId, StringComparison.OrdinalIgnoreCase))
+                                   || (string.IsNullOrEmpty(p.loginId) && !string.IsNullOrEmpty(adDisplayName) && string.Equals(p.name, adDisplayName, StringComparison.OrdinalIgnoreCase))
                         });
                     }
                     Response.Write(serializer.Serialize(new {
@@ -175,7 +181,7 @@
                 }
                 else
                 {
-                    Response.Write(serializer.Serialize(new { status = "error", msg = "Not found." }));
+                    throw new AppException("Not found.", 404);
                 }
             }
             else if (mode == "update")
@@ -195,6 +201,7 @@
                     string name = Request.Form["name"];
                     if (string.IsNullOrEmpty(name) || name.Length > 50) throw new AppException("名前が無効です。");
                     string ansStr = Request.Form["answers"];
+                    if (string.IsNullOrEmpty(ansStr)) throw new AppException("回答が指定されていません。");
                     var answers = new List<int>();
                     foreach (var s in ansStr.Split(','))
                     {
@@ -207,7 +214,18 @@
                     if (comment.Length > 200) throw new AppException("コメントが長すぎます。");
 
                     string loginId = User.Identity.Name;
-                    var person = eventData.participants.Find(p => p.loginId == loginId);
+                    var person = eventData.participants.Find(p => string.Equals(p.loginId, loginId, StringComparison.OrdinalIgnoreCase));
+                    if (person == null)
+                    {
+                        string legacyName = Session["UserDisplayName"] as string;
+                        if (!string.IsNullOrEmpty(legacyName))
+                        {
+                            var legacy = eventData.participants.Find(p =>
+                                string.IsNullOrEmpty(p.loginId) &&
+                                string.Equals(p.name, legacyName, StringComparison.OrdinalIgnoreCase));
+                            if (legacy != null) { legacy.loginId = loginId; person = legacy; }
+                        }
+                    }
                     if (person != null) { person.name = name; person.answers = answers; person.comment = comment; }
                     else { eventData.participants.Add(new Participant { loginId = loginId, name = name, answers = answers, comment = comment }); }
 
@@ -227,7 +245,7 @@
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
                     if (string.IsNullOrEmpty(eventData.creatorLoginId) ||
-                        eventData.creatorLoginId != User.Identity.Name)
+                        !string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase))
                         throw new AppException("この操作を行う権限がありません。", 403);
                     eventData.locked = true;
                     SaveJson(path, eventData);
@@ -246,9 +264,11 @@
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
                     if (string.IsNullOrEmpty(eventData.creatorLoginId) ||
-                        eventData.creatorLoginId != User.Identity.Name)
+                        !string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase))
                         throw new AppException("この操作を行う権限がありません。", 403);
                     File.Delete(path);
+                    object removedLock;
+                    _fileLocks.TryRemove(id, out removedLock);
                     Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
             }
@@ -449,7 +469,12 @@
 
     $.ajaxSetup({ headers: { "X-CSRF-Token": csrfToken } });
 
-    $(document).ajaxError(function(event, xhr) {
+    $(document).ajaxError(function(event, xhr, settings) {
+        if (xhr.status === 404 && settings.url && settings.url.indexOf("mode=load") !== -1) {
+            alert("イベントが見つかりません。削除された可能性があります。");
+            window.location.href = "default.aspx";
+            return;
+        }
         if (xhr.status === 403) {
             alert("セッションが期限切れ、または操作権限がありません。ページを再読み込みしてください。");
         } else if (xhr.status >= 400) {
@@ -489,8 +514,6 @@
     function loadEvent(id){
         currentEventId = id;
         $.getJSON("default.aspx?mode=load&id=" + id, function(data){
-            if(data.status === "error"){ alert("イベントが見つかりません。削除された可能性があります。"); window.location.href="default.aspx"; return; }
-            
             eventData = data;
             $("#create-view").addClass("hidden");
             $("#schedule-view").removeClass("hidden");
