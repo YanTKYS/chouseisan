@@ -3,18 +3,18 @@
 <%@ Import Namespace="System.Collections.Generic" %>
 <%@ Import Namespace="System.Web.Script.Serialization" %>
 <%@ Import Namespace="System.Text" %>
-<!-- AD˜AŒg—p–¼‘O‹óŠÔ‚Ì’Ç‰Á -->
+<!-- ADé€£æºç”¨åå‰ç©ºé–“ã®è¿½åŠ  -->
 <%@ Import Namespace="System.DirectoryServices.AccountManagement" %>
 <%@ Import Namespace="System.Text.RegularExpressions" %>
 
 <script runat="server">
     // =============================================================================
-    // ƒƒ“ƒo•Ï”: HTML‘¤‚Å—˜—p‚·‚é‚½‚ß public ‚Å’è‹`
+    // ãƒ¡ãƒ³ãƒå¤‰æ•°: HTMLå´ã§åˆ©ç”¨ã™ã‚‹ãŸã‚ public ã§å®šç¾©
     // =============================================================================
     public string UserDisplayName = "";
 
     // =============================================================================
-    // ƒf[ƒ^ƒNƒ‰ƒX’è‹`
+    // ãƒ‡ãƒ¼ã‚¿ã‚¯ãƒ©ã‚¹å®šç¾©
     // =============================================================================
     public class EventData
     {
@@ -34,14 +34,14 @@
     }
 
     // =============================================================================
-    // ƒoƒbƒNƒGƒ“ƒhˆ—
+    // ãƒãƒƒã‚¯ã‚¨ãƒ³ãƒ‰å‡¦ç†
     // =============================================================================
     protected void Page_Load(object sender, EventArgs e)
     {
         string mode = Request["mode"];
 
         // ---------------------------------------------------------
-        // ’ÊíƒAƒNƒZƒX (HTML•\¦)
+        // é€šå¸¸ã‚¢ã‚¯ã‚»ã‚¹æ™‚ (HTMLè¡¨ç¤º)
         // ---------------------------------------------------------
         if (string.IsNullOrEmpty(mode)) 
         {
@@ -75,7 +75,7 @@
         }
 
         // ---------------------------------------------------------
-        // APIˆ— (AJAX)
+        // APIå‡¦ç† (AJAX)
         // ---------------------------------------------------------
         Response.ContentType = "application/json";
         Response.ContentEncoding = Encoding.UTF8;
@@ -88,11 +88,16 @@
 
         try
         {
+            bool requiresPost = (mode == "create" || mode == "update" || mode == "lock" || mode == "delete");
+            bool requiresGet  = (mode == "load");
+            if (requiresPost && Request.HttpMethod != "POST") throw new Exception("Method Not Allowed.");
+            if (requiresGet  && Request.HttpMethod != "GET")  throw new Exception("Method Not Allowed.");
+
             if (mode == "create")
             {
                 string title = Request["title"];
                 string rawDates = Request["dates"];
-                if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(rawDates)) throw new Exception("“ü—Í•s‘«");
+                if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(rawDates)) throw new Exception("å…¥åŠ›ä¸è¶³");
 
                 string eventId = "evt" + Guid.NewGuid().ToString("N");
                 var newEvent = new EventData
@@ -139,11 +144,11 @@
                 string path = dataDir + id + ".json";
                 lock (string.Intern(path)) 
                 {
-                    if (!File.Exists(path)) throw new Exception("ƒf[ƒ^‚È‚µ");
+                    if (!File.Exists(path)) throw new Exception("ãƒ‡ãƒ¼ã‚¿ãªã—");
                     string json = File.ReadAllText(path, Encoding.UTF8);
                     var eventData = serializer.Deserialize<EventData>(json);
 
-                    if (eventData.locked) throw new Exception("‚±‚ÌƒCƒxƒ“ƒg‚ÍŠù‚É’÷‚ßØ‚ç‚ê‚Ä‚¢‚Ü‚·B");
+                    if (eventData.locked) throw new Exception("ã“ã®ã‚¤ãƒ™ãƒ³ãƒˆã¯æ—¢ã«ç· ã‚åˆ‡ã‚‰ã‚Œã¦ã„ã¾ã™ã€‚");
 
                     string name = Request["name"];
                     if (string.IsNullOrWhiteSpace(name)) throw new Exception("Invalid name.");
@@ -226,7 +231,7 @@
 
 <!-- 
 =============================================================================
- ƒtƒƒ“ƒgƒGƒ“ƒh‰æ–Ê
+ ãƒ•ãƒ­ãƒ³ãƒˆã‚¨ãƒ³ãƒ‰ç”»é¢
 =============================================================================
 -->
 <!DOCTYPE html>
@@ -234,19 +239,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>’²®‚³‚ñ - ’¡“à“ú’ö’²®ƒc[ƒ‹</title>
-    <!-- jQueryƒpƒX: w’è‚Ì’Ê‚è -->
+    <title>èª¿æ•´ã•ã‚“ - åºå†…æ—¥ç¨‹èª¿æ•´ãƒ„ãƒ¼ãƒ«</title>
+    <!-- jQueryãƒ‘ã‚¹: æŒ‡å®šã®é€šã‚Š -->
     <script src="./common/jquery-3.6.0.min.js"></script>
     <style>
         body { font-family: "Meiryo", "Hiragino Kaku Gothic ProN", sans-serif; background: #f4f4f4; padding: 20px; color: #333; }
         .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         
-        /* ƒwƒbƒ_[ */
+        /* ãƒ˜ãƒƒãƒ€ãƒ¼ */
         .app-header { border-bottom: 2px solid #007bff; padding-bottom: 15px; margin-bottom: 30px; display: flex; align-items: baseline; flex-wrap: wrap; }
         .logo-main { font-size: 32px; font-weight: bold; color: #007bff; margin-right: 15px; letter-spacing: 0.05em; }
         .logo-sub { font-size: 16px; color: #666; font-weight: normal; }
         
-        /* ƒƒOƒCƒ“ƒ†[ƒU[•\¦ */
+        /* ãƒ­ã‚°ã‚¤ãƒ³ãƒ¦ãƒ¼ã‚¶ãƒ¼è¡¨ç¤º */
         .login-info { margin-left: auto; font-size: 14px; color: #555; background: #eee; padding: 5px 10px; border-radius: 4px; }
 
         h2 { font-size: 20px; margin-bottom: 15px; border-left: 5px solid #007bff; padding-left: 10px; color: #444; }
@@ -293,91 +298,91 @@
 
 <div class="container">
     <header class="app-header">
-        <span class="logo-main">’²®‚³‚ñ</span>
-        <span class="logo-sub">’¡“à“ú’ö’²®ƒc[ƒ‹</span>
+        <span class="logo-main">èª¿æ•´ã•ã‚“</span>
+        <span class="logo-sub">åºå†…æ—¥ç¨‹èª¿æ•´ãƒ„ãƒ¼ãƒ«</span>
         
-        <!-- ƒƒOƒCƒ“î•ñ•\¦ƒGƒŠƒA -->
+        <!-- ãƒ­ã‚°ã‚¤ãƒ³æƒ…å ±è¡¨ç¤ºã‚¨ãƒªã‚¢ -->
         <div class="login-info">
             Login: <strong><%= Server.HtmlEncode(UserDisplayName) %></strong>
         </div>
     </header>
 
-    <!-- V‹Kì¬‰æ–Ê -->
+    <!-- æ–°è¦ä½œæˆç”»é¢ -->
     <div id="create-view">
-        <h2>V‹KƒCƒxƒ“ƒgì¬</h2>
+        <h2>æ–°è¦ã‚¤ãƒ™ãƒ³ãƒˆä½œæˆ</h2>
         <p style="font-size:14px; color:#666; margin-bottom:20px;">
-            Œó•â“ú’ö‚ğ“ü—Í‚µ‚ÄƒCƒxƒ“ƒgƒy[ƒW‚ğì¬‚µ‚Ü‚·B<br>
-            ì¬‚³‚ê‚½URL‚ğQ‰ÁÒ‚É‹¤—L‚µ‚Ä‚­‚¾‚³‚¢B
+            å€™è£œæ—¥ç¨‹ã‚’å…¥åŠ›ã—ã¦ã‚¤ãƒ™ãƒ³ãƒˆãƒšãƒ¼ã‚¸ã‚’ä½œæˆã—ã¾ã™ã€‚<br>
+            ä½œæˆã•ã‚ŒãŸURLã‚’å‚åŠ è€…ã«å…±æœ‰ã—ã¦ãã ã•ã„ã€‚
         </p>
         
-        <label>ƒCƒxƒ“ƒg–¼</label>
-        <input type="text" id="new-title" placeholder="—áF‘æ3‰ñDX„i‰ï‹c">
+        <label>ã‚¤ãƒ™ãƒ³ãƒˆå</label>
+        <input type="text" id="new-title" placeholder="ä¾‹ï¼šç¬¬3å›DXæ¨é€²ä¼šè­°">
         
-        <label>Œó•â“ú’öi1s‚É1‚Â“ü—Íj</label>
+        <label>å€™è£œæ—¥ç¨‹ï¼ˆ1è¡Œã«1ã¤å…¥åŠ›ï¼‰</label>
         <textarea id="new-dates" rows="6" placeholder="5/20 10:00&#13;&#10;5/20 13:00&#13;&#10;5/21 10:00"></textarea>
         
-        <button class="btn-primary" onclick="execCreateEvent()">ƒCƒxƒ“ƒg‚ğì¬‚·‚é</button>
+        <button class="btn-primary" onclick="execCreateEvent()">ã‚¤ãƒ™ãƒ³ãƒˆã‚’ä½œæˆã™ã‚‹</button>
     </div>
 
-    <!-- ’²®E‰{——‰æ–Ê -->
+    <!-- èª¿æ•´ãƒ»é–²è¦§ç”»é¢ -->
     <div id="schedule-view" class="hidden">
-        <h2 id="evt-title">ƒCƒxƒ“ƒg–¼</h2>
-        <div id="locked-banner" class="locked-banner hidden">‚±‚ÌƒCƒxƒ“ƒg‚ÍŠm’èÏ‚İ‚Ì‚½‚ßA‰ñ“š‚ğ’÷‚ßØ‚Á‚Ä‚¢‚Ü‚·</div>
+        <h2 id="evt-title">ã‚¤ãƒ™ãƒ³ãƒˆå</h2>
+        <div id="locked-banner" class="locked-banner hidden">ã“ã®ã‚¤ãƒ™ãƒ³ãƒˆã¯ç¢ºå®šæ¸ˆã¿ã®ãŸã‚ã€å›ç­”ã‚’ç· ã‚åˆ‡ã£ã¦ã„ã¾ã™</div>
         
         <div style="margin-bottom: 20px;">
-            <span style="font-size:14px; font-weight:bold;">‹¤—L—pURLF</span>
+            <span style="font-size:14px; font-weight:bold;">å…±æœ‰ç”¨URLï¼š</span>
             <div id="share-url" class="share-url-box"></div>
-            <button class="copy-btn" onclick="copyShareUrl()">URL‚ğƒRƒs[</button>
+            <button class="copy-btn" onclick="copyShareUrl()">URLã‚’ã‚³ãƒ”ãƒ¼</button>
         </div>
 
         <div id="table-container" style="overflow-x: auto;"></div>
 
-        <!-- “ü—ÍƒGƒŠƒA -->
+        <!-- å…¥åŠ›ã‚¨ãƒªã‚¢ -->
         <div id="input-container" class="input-area">
-            <h3 style="margin-top:0;">oŒ‡‚ğ“ü—Í‚·‚é</h3>
-            <label>–¼</label>
-            <!-- ADæ“¾‚µ‚½–¼‚ğ‰Šú’l‚Éİ’è‚·‚é‚½‚ß‚ÌêŠ -->
-            <input type="text" id="my-name" placeholder="Š‘® –¼">
+            <h3 style="margin-top:0;">å‡ºæ¬ ã‚’å…¥åŠ›ã™ã‚‹</h3>
+            <label>æ°å</label>
+            <!-- ADå–å¾—ã—ãŸæ°åã‚’åˆæœŸå€¤ã«è¨­å®šã™ã‚‹ãŸã‚ã®å ´æ‰€ -->
+            <input type="text" id="my-name" placeholder="æ‰€å± æ°å">
             
             <div id="date-inputs"></div>
             
-            <label>ƒRƒƒ“ƒgi”CˆÓj</label>
-            <input type="text" id="my-comment" placeholder="—áFŒßŒãˆÈ~‚È‚çQ‰Á‰Â”\‚Å‚·">
+            <label>ã‚³ãƒ¡ãƒ³ãƒˆï¼ˆä»»æ„ï¼‰</label>
+            <input type="text" id="my-comment" placeholder="ä¾‹ï¼šåˆå¾Œä»¥é™ãªã‚‰å‚åŠ å¯èƒ½ã§ã™">
 
-            <button id="btn-submit" class="btn-primary" onclick="submitAnswer()">“o˜^‚·‚é</button>
+            <button id="btn-submit" class="btn-primary" onclick="submitAnswer()">ç™»éŒ²ã™ã‚‹</button>
         </div>
 
         <div id="locked-message" class="hidden locked-msg">
-            ‚±‚ÌƒCƒxƒ“ƒg‚ÍŠm’èÏ‚İ‚Ì‚½‚ßA‰ñ“š‚ğ’÷‚ßØ‚è‚Ü‚µ‚½B
+            ã“ã®ã‚¤ãƒ™ãƒ³ãƒˆã¯ç¢ºå®šæ¸ˆã¿ã®ãŸã‚ã€å›ç­”ã‚’ç· ã‚åˆ‡ã‚Šã¾ã—ãŸã€‚
         </div>
 
-        <!-- ŠÇ—ƒGƒŠƒA -->
+        <!-- ç®¡ç†ã‚¨ãƒªã‚¢ -->
         <div class="admin-area hidden" id="admin-controls">
-            <span style="font-size:0.9em; color:#666;">ŠÇ—Òƒƒjƒ…[F</span>
-            <button class="btn-lock" onclick="execLockEvent()">Šm’è‚µ‚Ä’÷‚ßØ‚é</button>
-            <button class="btn-delete" onclick="execDeleteEvent()">íœ‚·‚é</button>
+            <span style="font-size:0.9em; color:#666;">ç®¡ç†è€…ãƒ¡ãƒ‹ãƒ¥ãƒ¼ï¼š</span>
+            <button class="btn-lock" onclick="execLockEvent()">ç¢ºå®šã—ã¦ç· ã‚åˆ‡ã‚‹</button>
+            <button class="btn-delete" onclick="execDeleteEvent()">å‰Šé™¤ã™ã‚‹</button>
             <div id="inline-confirm" class="inline-confirm hidden">
                 <p id="inline-confirm-msg"></p>
-                <button id="btn-confirm-yes" class="btn-confirm-yes">‚Í‚¢</button>
-                <button onclick="hideConfirm()" class="btn-confirm-cancel">ƒLƒƒƒ“ƒZƒ‹</button>
+                <button id="btn-confirm-yes" class="btn-confirm-yes">ã¯ã„</button>
+                <button onclick="hideConfirm()" class="btn-confirm-cancel">ã‚­ãƒ£ãƒ³ã‚»ãƒ«</button>
             </div>
         </div>
         
         <div style="margin-top:20px; text-align:right;">
-            <a href="default.aspx" style="color:#007bff; text-decoration:none;">&laquo; ƒgƒbƒv‚É–ß‚é</a>
+            <a href="default.aspx" style="color:#007bff; text-decoration:none;">&laquo; ãƒˆãƒƒãƒ—ã«æˆ»ã‚‹</a>
         </div>
     </div>
 </div>
 
 <script>
-    // ƒT[ƒo[‘¤‚Åæ“¾‚µ‚½–¼‚ğJS•Ï”‚ÉƒZƒbƒg (ƒGƒXƒP[ƒvˆ—•t‚«)
+    // ã‚µãƒ¼ãƒãƒ¼å´ã§å–å¾—ã—ãŸæ°åã‚’JSå¤‰æ•°ã«ã‚»ãƒƒãƒˆ (ã‚¨ã‚¹ã‚±ãƒ¼ãƒ—å‡¦ç†ä»˜ã)
     var currentUserDisplayName = "<%= System.Web.HttpUtility.JavaScriptStringEncode(UserDisplayName) %>";
 
     var currentEventId = "";
     var eventData = null;
 
     $(document).ready(function(){
-        // –¼—“‚ÉAD–¼‚ğ©“®ƒZƒbƒg
+        // æ°åæ¬„ã«ADåã‚’è‡ªå‹•ã‚»ãƒƒãƒˆ
         if(currentUserDisplayName) {
             $("#my-name").val(currentUserDisplayName);
         }
@@ -391,7 +396,7 @@
         var title = $("#new-title").val();
         var dates = $("#new-dates").val();
         
-        if(!title || !dates) { alert("ƒCƒxƒ“ƒg–¼‚Æ“ú’ö‚ğ“ü—Í‚µ‚Ä‚­‚¾‚³‚¢"); return; }
+        if(!title || !dates) { alert("ã‚¤ãƒ™ãƒ³ãƒˆåã¨æ—¥ç¨‹ã‚’å…¥åŠ›ã—ã¦ãã ã•ã„"); return; }
 
         $.post("default.aspx?mode=create", {
             title: title,
@@ -408,14 +413,14 @@
     function loadEvent(id){
         currentEventId = id;
         $.getJSON("default.aspx?mode=load&id=" + id, function(data){
-            if(data.status === "error"){ alert("ƒCƒxƒ“ƒg‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñBíœ‚³‚ê‚½‰Â”\«‚ª‚ ‚è‚Ü‚·B"); window.location.href="default.aspx"; return; }
+            if(data.status === "error"){ alert("ã‚¤ãƒ™ãƒ³ãƒˆãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚å‰Šé™¤ã•ã‚ŒãŸå¯èƒ½æ€§ãŒã‚ã‚Šã¾ã™ã€‚"); window.location.href="default.aspx"; return; }
             
             eventData = data;
             $("#create-view").addClass("hidden");
             $("#schedule-view").removeClass("hidden");
             
             $("#evt-title").text(data.title);
-            document.title = data.title + " - ’²®‚³‚ñ";
+            document.title = data.title + " - èª¿æ•´ã•ã‚“";
             $("#share-url").text(window.location.href);
             renderTable(data);
             
@@ -444,25 +449,25 @@
 
     function renderTable(data){
         if(data.participants.length === 0) {
-            $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">‚Ü‚¾‰ñ“š‚ª‚ ‚è‚Ü‚¹‚ñB</p>');
+            $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">ã¾ã å›ç­”ãŒã‚ã‚Šã¾ã›ã‚“ã€‚</p>');
             return;
         }
         var parts = [];
-        parts.push('<table><thead><tr><th style="min-width:120px;">Q‰ÁÒ</th>');
+        parts.push('<table><thead><tr><th style="min-width:120px;">å‚åŠ è€…</th>');
         data.dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
-        parts.push('<th style="min-width:150px;">ƒRƒƒ“ƒg</th></tr></thead><tbody>');
+        parts.push('<th style="min-width:150px;">ã‚³ãƒ¡ãƒ³ãƒˆ</th></tr></thead><tbody>');
 
         data.participants.forEach(function(p){
             parts.push('<tr><td>' + escapeHtml(p.name) + '</td>');
             p.answers.forEach(function(a){
-                var sym = a===2 ? "›" : (a===1 ? "¢" : "~");
+                var sym = a===2 ? "â—‹" : (a===1 ? "â–³" : "Ã—");
                 var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : "symbol-ng");
                 parts.push('<td class="'+cls+'">' + sym + '</td>');
             });
             parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
         });
 
-        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">›‚Ì”</td>');
+        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">â—‹ã®æ•°</td>');
         for(var i=0; i<data.dates.length; i++){
             var count = 0;
             data.participants.forEach(function(p){ if(p.answers[i]===2) count++; });
@@ -483,9 +488,9 @@
             var val = (myAnswers && myAnswers[idx] !== undefined) ? myAnswers[idx] : 2;
             parts.push('<div style="margin-top:10px; border-bottom:1px dotted #ccc; padding-bottom:5px;">');
             parts.push('<span style="font-weight:bold;">' + escapeHtml(d) + '</span><br>');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2"' + (val===2?' checked':'') + '> <span class="symbol-ok">›</span></label> ');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"' + (val===1?' checked':'') + '> <span class="symbol-tri">¢</span></label> ');
-            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"' + (val===0?' checked':'') + '> <span class="symbol-ng">~</span></label>');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="2"' + (val===2?' checked':'') + '> <span class="symbol-ok">â—‹</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="1"' + (val===1?' checked':'') + '> <span class="symbol-tri">â–³</span></label> ');
+            parts.push('<label style="display:inline-block; margin-right:15px; cursor:pointer;"><input type="radio" name="ans_'+idx+'" value="0"' + (val===0?' checked':'') + '> <span class="symbol-ng">Ã—</span></label>');
             parts.push('</div>');
         });
         $("#date-inputs").html(parts.join(''));
@@ -494,7 +499,7 @@
 
     function submitAnswer(){
         var name = $("#my-name").val();
-        if(!name){ showToast("–¼‘O‚ğ“ü—Í‚µ‚Ä‚­‚¾‚³‚¢"); return; }
+        if(!name){ showToast("åå‰ã‚’å…¥åŠ›ã—ã¦ãã ã•ã„"); return; }
 
         var answers = [];
         for(var i=0; i<eventData.dates.length; i++){
@@ -510,34 +515,34 @@
         }, function(res){
             if(res.status === "ok"){
                 loadEvent(currentEventId);
-                showToast("“o˜^‚µ‚Ü‚µ‚½B");
+                showToast("ç™»éŒ²ã—ã¾ã—ãŸã€‚");
                 $("#my-comment").val("");
             } else {
-                showToast("ƒGƒ‰[F" + res.msg);
+                showToast("ã‚¨ãƒ©ãƒ¼ï¼š" + res.msg);
             }
         }).always(function(){ $btn.prop("disabled", false); });
     }
 
     function execLockEvent() {
-        showConfirm("–{“–‚É’÷‚ßØ‚è‚Ü‚·‚©H’÷‚ßØ‚é‚ÆA‚±‚êˆÈã‰ñ“š‚ğ’Ç‰Á‚Å‚«‚È‚­‚È‚è‚Ü‚·B", function(){
+        showConfirm("æœ¬å½“ã«ç· ã‚åˆ‡ã‚Šã¾ã™ã‹ï¼Ÿç· ã‚åˆ‡ã‚‹ã¨ã€ã“ã‚Œä»¥ä¸Šå›ç­”ã‚’è¿½åŠ ã§ããªããªã‚Šã¾ã™ã€‚", function(){
             $.post("default.aspx?mode=lock", { id: currentEventId }, function(res){
                 if(res.status === "ok") {
                     loadEvent(currentEventId);
-                    showToast("’÷‚ßØ‚è‚Ü‚µ‚½B");
+                    showToast("ç· ã‚åˆ‡ã‚Šã¾ã—ãŸã€‚");
                 } else {
-                    showToast("ƒGƒ‰[‚ª”­¶‚µ‚Ü‚µ‚½");
+                    showToast("ã‚¨ãƒ©ãƒ¼ãŒç™ºç”Ÿã—ã¾ã—ãŸ");
                 }
             });
         }, "#28a745");
     }
 
     function execDeleteEvent() {
-        showConfirm("–{“–‚Éíœ‚µ‚Ü‚·‚©H‚±‚Ì‘€ì‚Íæ‚èÁ‚¹‚Ü‚¹‚ñB", function(){
+        showConfirm("æœ¬å½“ã«å‰Šé™¤ã—ã¾ã™ã‹ï¼Ÿã“ã®æ“ä½œã¯å–ã‚Šæ¶ˆã›ã¾ã›ã‚“ã€‚", function(){
             $.post("default.aspx?mode=delete", { id: currentEventId }, function(res){
                 if(res.status === "ok") {
                     window.location.href = "default.aspx";
                 } else {
-                    showToast("ƒGƒ‰[‚ª”­¶‚µ‚Ü‚µ‚½");
+                    showToast("ã‚¨ãƒ©ãƒ¼ãŒç™ºç”Ÿã—ã¾ã—ãŸ");
                 }
             });
         }, "#dc3545");
@@ -548,8 +553,8 @@
         if(navigator.clipboard) {
             navigator.clipboard.writeText(url).then(function(){
                 var $btn = $(".copy-btn");
-                $btn.text("ƒRƒs[‚µ‚Ü‚µ‚½I").addClass("copied");
-                setTimeout(function(){ $btn.text("URL‚ğƒRƒs[").removeClass("copied"); }, 2000);
+                $btn.text("ã‚³ãƒ”ãƒ¼ã—ã¾ã—ãŸï¼").addClass("copied");
+                setTimeout(function(){ $btn.text("URLã‚’ã‚³ãƒ”ãƒ¼").removeClass("copied"); }, 2000);
             });
         } else {
             window.prompt("URL:", url);
