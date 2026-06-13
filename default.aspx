@@ -3,7 +3,6 @@
 <%@ Import Namespace="System.Collections.Generic" %>
 <%@ Import Namespace="System.Web.Script.Serialization" %>
 <%@ Import Namespace="System.Text" %>
-<!-- AD連携用名前空間の追加 -->
 <%@ Import Namespace="System.DirectoryServices.AccountManagement" %>
 <%@ Import Namespace="System.Text.RegularExpressions" %>
 
@@ -187,8 +186,8 @@
                         throw new Exception("Unauthorized.");
                     eventData.locked = true;
                     SaveJson(path, eventData);
-                    Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
+                Response.Write(serializer.Serialize(new { status = "ok" }));
             }
             else if (mode == "delete")
             {
@@ -204,8 +203,8 @@
                         eventData.creatorLoginId != User.Identity.Name)
                         throw new Exception("Unauthorized.");
                     File.Delete(path);
-                    Response.Write(serializer.Serialize(new { status = "ok" }));
                 }
+                Response.Write(serializer.Serialize(new { status = "ok" }));
             }
         }
         catch (Exception ex)
@@ -255,7 +254,6 @@
         .login-info { margin-left: auto; font-size: 14px; color: #555; background: #eee; padding: 5px 10px; border-radius: 4px; }
 
         h2 { font-size: 20px; margin-bottom: 15px; border-left: 5px solid #007bff; padding-left: 10px; color: #444; }
-        .locked-title { border-color: #6c757d; color: #6c757d; }
 
         label { display: block; margin-top: 20px; font-weight: bold; font-size: 14px; }
         input[type="text"], textarea { width: 100%; padding: 10px; margin-top: 5px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
@@ -277,12 +275,12 @@
         
         .hidden { display: none; }
         .input-area { background: #eef2f7; padding: 20px; border-radius: 6px; margin-top: 30px; }
-        .locked-msg { background: #fff3cd; color: #856404; padding: 15px; border: 1px solid #ffeeba; border-radius: 4px; margin-top: 20px; text-align: center; font-weight: bold;}
         .share-url-box { background: #f0f0f0; padding: 10px; border-radius: 4px; word-break: break-all; font-family: monospace; color: #007bff; }
         .copy-btn { margin-top: 6px; padding: 4px 12px; font-size: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
         .copy-btn:hover { background: #0056b3; }
         .copy-btn.copied { background: #28a745; }
         .locked-banner { background: #495057; color: white; padding: 12px 18px; border-radius: 4px; margin: 0 0 20px; font-weight: bold; text-align: center; font-size: 15px; }
+
         th:first-child, td:first-child { position: sticky; left: 0; z-index: 1; }
         th:first-child { background: #f8f9fa; }
         td:first-child { background: #fff; }
@@ -350,10 +348,6 @@
             <input type="text" id="my-comment" placeholder="例：午後以降なら参加可能です">
 
             <button id="btn-submit" class="btn-primary" onclick="submitAnswer()">登録する</button>
-        </div>
-
-        <div id="locked-message" class="hidden locked-msg">
-            このイベントは確定済みのため、回答を締め切りました。
         </div>
 
         <!-- 管理エリア -->
