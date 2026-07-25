@@ -13,13 +13,25 @@
     public string UserDisplayName = "";
 
     // =============================================================================
+    // 定数・静的メンバ
+    // =============================================================================
+    // データファイルの読み書きを直列化するロック。
+    // 以前は lock(string.Intern(path)) だったが、インターンされた文字列は
+    // プロセス終了まで解放されずイベントIDごとに蓄積するため、単一ロックに統一。
+    private static readonly object DataFileLock = new object();
+
+    private static readonly Regex EventIdPattern = new Regex(@"^evt[0-9a-f]{32}$");
+
+    private const string DataDirVirtualPath = "../chouseisan/data/";
+
+    // =============================================================================
     // データクラス定義
     // =============================================================================
     public class EventData
     {
         public string id { get; set; }
         public string title { get; set; }
-        public bool locked { get; set; } 
+        public bool locked { get; set; }
         public List<string> dates { get; set; }
         public List<Participant> participants { get; set; }
         public string creatorLoginId { get; set; }
@@ -32,6 +44,13 @@
         public string comment { get; set; }
     }
 
+    // クライアントへそのまま表示してよいメッセージを持つ例外。
+    // これ以外の例外は内部情報を含む可能性があるため、汎用メッセージに置き換える。
+    private class AppException : Exception
+    {
+        public AppException(string message) : base(message) { }
+    }
+
     // =============================================================================
     // バックエンド処理
     // =============================================================================
@@ -39,196 +58,287 @@
     {
         string mode = Request["mode"];
 
-        // ---------------------------------------------------------
         // 通常アクセス時 (HTML表示)
-        // ---------------------------------------------------------
-        if (string.IsNullOrEmpty(mode)) 
+        if (string.IsNullOrEmpty(mode))
         {
-            if (Session["UserDisplayName"] != null)
-            {
-                UserDisplayName = (string)Session["UserDisplayName"];
-            }
-            else
-            {
-                string loginId = User.Identity.Name;
-                if (!string.IsNullOrEmpty(loginId))
-                {
-                    try
-                    {
-                        using (PrincipalContext ctx = new PrincipalContext(ContextType.Domain))
-                        {
-                            UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId);
-                            UserDisplayName = (user != null && !string.IsNullOrEmpty(user.DisplayName))
-                                ? user.DisplayName
-                                : loginId;
-                        }
-                    }
-                    catch
-                    {
-                        UserDisplayName = loginId;
-                    }
-                    Session["UserDisplayName"] = UserDisplayName;
-                }
-            }
+            InitUserDisplayName();
             return;
         }
 
-        // ---------------------------------------------------------
         // API処理 (AJAX)
-        // ---------------------------------------------------------
+        HandleApiRequest(mode);
+    }
+
+    // ログインユーザーの表示名をADから解決し、セッションにキャッシュする
+    private void InitUserDisplayName()
+    {
+        if (Session["UserDisplayName"] != null)
+        {
+            UserDisplayName = (string)Session["UserDisplayName"];
+            return;
+        }
+
+        string loginId = User.Identity.Name;
+        if (string.IsNullOrEmpty(loginId)) return;
+
+        try
+        {
+            using (PrincipalContext ctx = new PrincipalContext(ContextType.Domain))
+            {
+                UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId);
+                UserDisplayName = (user != null && !string.IsNullOrEmpty(user.DisplayName))
+                    ? user.DisplayName
+                    : loginId;
+            }
+        }
+        catch
+        {
+            UserDisplayName = loginId;
+        }
+        Session["UserDisplayName"] = UserDisplayName;
+    }
+
+    private void HandleApiRequest(string mode)
+    {
         Response.ContentType = "application/json";
         Response.ContentEncoding = Encoding.UTF8;
         Response.Cache.SetCacheability(HttpCacheability.NoCache);
 
-        string dataDir = Server.MapPath("../chouseisan/data/");
-        if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
-
-        var serializer = new JavaScriptSerializer();
-
+        // 応答は各 mode の処理が正常終了した後に一度だけ書き出す。
+        // (処理途中で例外が発生しても、成功JSONとエラーJSONが混在しない)
         try
         {
-            bool requiresPost = (mode == "create" || mode == "update" || mode == "lock" || mode == "delete");
-            bool requiresGet  = (mode == "load");
-            if (requiresPost && Request.HttpMethod != "POST") throw new Exception("Method Not Allowed.");
-            if (requiresGet  && Request.HttpMethod != "GET")  throw new Exception("Method Not Allowed.");
+            RequireHttpMethod(mode);
 
-            if (mode == "create")
+            switch (mode)
             {
-                string title = Request["title"];
-                string rawDates = Request["dates"];
-                if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(rawDates)) throw new Exception("入力不足");
-
-                string eventId = "evt" + Guid.NewGuid().ToString("N");
-                var newEvent = new EventData
-                {
-                    id = eventId,
-                    title = title,
-                    locked = false,
-                    dates = new List<string>(rawDates.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)),
-                    participants = new List<Participant>(),
-                    creatorLoginId = User.Identity.Name
-                };
-                SaveJson(dataDir + eventId + ".json", newEvent);
-                Response.Write(serializer.Serialize(new { status = "ok", id = eventId }));
-            }
-            else if (mode == "load")
-            {
-                string id = Request["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
-                string path = dataDir + id + ".json";
-                if (File.Exists(path))
-                {
-                    string json = File.ReadAllText(path, Encoding.UTF8);
-                    var eventData = serializer.Deserialize<EventData>(json);
-                    bool isOwner = string.IsNullOrEmpty(eventData.creatorLoginId) ||
-                                   eventData.creatorLoginId == User.Identity.Name;
-                    Response.Write(serializer.Serialize(new {
-                        id = eventData.id,
-                        title = eventData.title,
-                        locked = eventData.locked,
-                        dates = eventData.dates,
-                        participants = eventData.participants,
-                        isOwner = isOwner
-                    }));
-                }
-                else
-                {
-                    Response.Write(serializer.Serialize(new { status = "error", msg = "Not found." }));
-                }
-            }
-            else if (mode == "update")
-            {
-                string id = Request["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
-                string path = dataDir + id + ".json";
-                lock (string.Intern(path)) 
-                {
-                    if (!File.Exists(path)) throw new Exception("データなし");
-                    string json = File.ReadAllText(path, Encoding.UTF8);
-                    var eventData = serializer.Deserialize<EventData>(json);
-
-                    if (eventData.locked) throw new Exception("このイベントは既に締め切られています。");
-
-                    string name = Request["name"];
-                    if (string.IsNullOrWhiteSpace(name)) throw new Exception("Invalid name.");
-                    string ansStr = Request["answers"];
-                    if (string.IsNullOrWhiteSpace(ansStr)) throw new Exception("Invalid answers.");
-                    var answers = new List<int>();
-                    foreach (var s in ansStr.Split(','))
-                    {
-                        int v;
-                        if (!int.TryParse(s.Trim(), out v) || v < 0 || v > 2)
-                            throw new Exception("Invalid answer value.");
-                        answers.Add(v);
-                    }
-                    if (answers.Count != eventData.dates.Count) throw new Exception("Answer count mismatch.");
-
-                    var person = eventData.participants.Find(p => p.name == name);
-                    if (person != null) { person.answers = answers; person.comment = Request["comment"]; }
-                    else { eventData.participants.Add(new Participant { name = name, answers = answers, comment = Request["comment"] }); }
-
-                    SaveJson(path, eventData);
-                }
-                Response.Write(serializer.Serialize(new { status = "ok" }));
-            }
-            else if (mode == "lock")
-            {
-                string id = Request["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
-                string path = dataDir + id + ".json";
-                lock (string.Intern(path)) 
-                {
-                    if (!File.Exists(path)) throw new Exception("Not found.");
-                    string json = File.ReadAllText(path, Encoding.UTF8);
-                    var eventData = serializer.Deserialize<EventData>(json);
-                    if (!string.IsNullOrEmpty(eventData.creatorLoginId) &&
-                        eventData.creatorLoginId != User.Identity.Name)
-                        throw new Exception("Unauthorized.");
-                    eventData.locked = true;
-                    SaveJson(path, eventData);
-                }
-                Response.Write(serializer.Serialize(new { status = "ok" }));
-            }
-            else if (mode == "delete")
-            {
-                string id = Request["id"];
-                if (!IsValidEventId(id)) throw new Exception("Invalid event ID.");
-                string path = dataDir + id + ".json";
-                lock (string.Intern(path)) 
-                {
-                    if (!File.Exists(path)) throw new Exception("Not found.");
-                    string json = File.ReadAllText(path, Encoding.UTF8);
-                    var eventData = serializer.Deserialize<EventData>(json);
-                    if (!string.IsNullOrEmpty(eventData.creatorLoginId) &&
-                        eventData.creatorLoginId != User.Identity.Name)
-                        throw new Exception("Unauthorized.");
-                    File.Delete(path);
-                }
-                Response.Write(serializer.Serialize(new { status = "ok" }));
+                case "create": WriteJson(CreateEvent()); break;
+                case "load":   WriteJson(LoadEvent());   break;
+                case "update": WriteJson(UpdateAnswer()); break;
+                case "lock":   WriteJson(LockEvent());   break;
+                case "delete": WriteJson(DeleteEvent()); break;
+                default: throw new AppException("不正なリクエストです。");
             }
         }
-        catch (Exception ex)
+        catch (AppException ex)
         {
-            Response.Write(serializer.Serialize(new { status = "error", msg = ex.Message }));
+            WriteJson(new { status = "error", msg = ex.Message });
         }
+        catch (Exception)
+        {
+            WriteJson(new { status = "error", msg = "サーバー処理中にエラーが発生しました。" });
+        }
+
         Response.Flush();
         Response.SuppressContent = true;
         Context.ApplicationInstance.CompleteRequest();
     }
 
-    private bool IsValidEventId(string id)
+    private void RequireHttpMethod(string mode)
     {
-        return !string.IsNullOrEmpty(id) && System.Text.RegularExpressions.Regex.IsMatch(id, @"^evt[0-9a-f]{32}$");
+        bool requiresPost = (mode == "create" || mode == "update" || mode == "lock" || mode == "delete");
+        bool requiresGet  = (mode == "load");
+        if (requiresPost && Request.HttpMethod != "POST") throw new AppException("Method Not Allowed.");
+        if (requiresGet  && Request.HttpMethod != "GET")  throw new AppException("Method Not Allowed.");
     }
 
-    private void SaveJson(string path, object data)
+    // ---------------------------------------------------------
+    // 各API処理
+    // ---------------------------------------------------------
+    private object CreateEvent()
     {
-        var serializer = new JavaScriptSerializer();
-        File.WriteAllText(path, serializer.Serialize(data), Encoding.UTF8);
+        string title = Request["title"];
+        if (string.IsNullOrWhiteSpace(title)) throw new AppException("イベント名を入力してください。");
+
+        List<string> dates = ParseDates(Request["dates"]);
+        if (dates.Count == 0) throw new AppException("候補日程を入力してください。");
+
+        string eventId = "evt" + Guid.NewGuid().ToString("N");
+        var newEvent = new EventData
+        {
+            id = eventId,
+            title = title.Trim(),
+            locked = false,
+            dates = dates,
+            participants = new List<Participant>(),
+            creatorLoginId = User.Identity.Name
+        };
+
+        string path = GetEventPath(eventId);
+        lock (DataFileLock)
+        {
+            SaveJson(path, newEvent);
+        }
+        return new { status = "ok", id = eventId };
+    }
+
+    private object LoadEvent()
+    {
+        string path = GetEventPath(Request["id"]);
+        EventData eventData;
+        lock (DataFileLock)
+        {
+            eventData = ReadEvent(path);
+        }
+        return new
+        {
+            id = eventData.id,
+            title = eventData.title,
+            locked = eventData.locked,
+            dates = eventData.dates,
+            participants = eventData.participants,
+            isOwner = IsOwner(eventData)
+        };
+    }
+
+    private object UpdateAnswer()
+    {
+        string path = GetEventPath(Request["id"]);
+
+        string name = Request["name"];
+        if (string.IsNullOrWhiteSpace(name)) throw new AppException("氏名を入力してください。");
+        name = name.Trim();
+
+        string comment = Request["comment"];
+        if (comment != null) comment = comment.Trim();
+
+        lock (DataFileLock)
+        {
+            EventData eventData = ReadEvent(path);
+            if (eventData.locked) throw new AppException("このイベントは既に締め切られています。");
+
+            List<int> answers = ParseAnswers(Request["answers"], eventData.dates.Count);
+
+            Participant person = eventData.participants.Find(
+                p => p.name != null && p.name.Trim() == name);
+            if (person != null)
+            {
+                person.answers = answers;
+                person.comment = comment;
+            }
+            else
+            {
+                eventData.participants.Add(new Participant { name = name, answers = answers, comment = comment });
+            }
+
+            SaveJson(path, eventData);
+        }
+        return new { status = "ok" };
+    }
+
+    private object LockEvent()
+    {
+        string path = GetEventPath(Request["id"]);
+        lock (DataFileLock)
+        {
+            EventData eventData = ReadEvent(path);
+            RequireOwner(eventData);
+            if (!eventData.locked)
+            {
+                eventData.locked = true;
+                SaveJson(path, eventData);
+            }
+        }
+        return new { status = "ok" };
+    }
+
+    private object DeleteEvent()
+    {
+        string path = GetEventPath(Request["id"]);
+        lock (DataFileLock)
+        {
+            EventData eventData = ReadEvent(path);
+            RequireOwner(eventData);
+            File.Delete(path);
+        }
+        return new { status = "ok" };
+    }
+
+    // ---------------------------------------------------------
+    // 入力パース・検証
+    // ---------------------------------------------------------
+    private static List<string> ParseDates(string rawDates)
+    {
+        var dates = new List<string>();
+        if (string.IsNullOrEmpty(rawDates)) return dates;
+
+        foreach (string line in rawDates.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string date = line.Trim();
+            if (date.Length > 0) dates.Add(date);
+        }
+        return dates;
+    }
+
+    private static List<int> ParseAnswers(string rawAnswers, int expectedCount)
+    {
+        if (string.IsNullOrWhiteSpace(rawAnswers)) throw new AppException("回答を選択してください。");
+
+        var answers = new List<int>();
+        foreach (string s in rawAnswers.Split(','))
+        {
+            int v;
+            if (!int.TryParse(s.Trim(), out v) || v < 0 || v > 2)
+                throw new AppException("回答の値が不正です。");
+            answers.Add(v);
+        }
+        if (answers.Count != expectedCount) throw new AppException("回答数が候補日数と一致しません。");
+        return answers;
+    }
+
+    // ---------------------------------------------------------
+    // データアクセス
+    // ---------------------------------------------------------
+    private string GetEventPath(string id)
+    {
+        if (string.IsNullOrEmpty(id) || !EventIdPattern.IsMatch(id)) throw new AppException("Invalid event ID.");
+
+        string dataDir = Server.MapPath(DataDirVirtualPath);
+        if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
+        return Path.Combine(dataDir, id + ".json");
+    }
+
+    // イベントJSONを読み込む。欠損しているコレクションは空で初期化する
+    private static EventData ReadEvent(string path)
+    {
+        if (!File.Exists(path)) throw new AppException("イベントが見つかりません。");
+
+        string json = File.ReadAllText(path, Encoding.UTF8);
+        EventData eventData = new JavaScriptSerializer().Deserialize<EventData>(json);
+        if (eventData == null) throw new AppException("イベントデータを読み込めません。");
+
+        if (eventData.dates == null) eventData.dates = new List<string>();
+        if (eventData.participants == null) eventData.participants = new List<Participant>();
+        return eventData;
+    }
+
+    private static void SaveJson(string path, object data)
+    {
+        File.WriteAllText(path, new JavaScriptSerializer().Serialize(data), Encoding.UTF8);
+    }
+
+    // ---------------------------------------------------------
+    // 権限・応答
+    // ---------------------------------------------------------
+    // 作成者本人か判定する。creatorLoginId 未設定の旧データは全員を所有者として扱う
+    private bool IsOwner(EventData eventData)
+    {
+        return string.IsNullOrEmpty(eventData.creatorLoginId)
+            || string.Equals(eventData.creatorLoginId, User.Identity.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RequireOwner(EventData eventData)
+    {
+        if (!IsOwner(eventData)) throw new AppException("この操作を行う権限がありません。");
+    }
+
+    private void WriteJson(object data)
+    {
+        Response.Write(new JavaScriptSerializer().Serialize(data));
     }
 </script>
 
-<!-- 
+<!--
 =============================================================================
  フロントエンド画面
 =============================================================================
@@ -244,12 +354,12 @@
     <style>
         body { font-family: "Meiryo", "Hiragino Kaku Gothic ProN", sans-serif; background: #f4f4f4; padding: 20px; color: #333; }
         .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        
+
         /* ヘッダー */
         .app-header { border-bottom: 2px solid #007bff; padding-bottom: 15px; margin-bottom: 30px; display: flex; align-items: baseline; flex-wrap: wrap; }
         .logo-main { font-size: 32px; font-weight: bold; color: #007bff; margin-right: 15px; letter-spacing: 0.05em; }
         .logo-sub { font-size: 16px; color: #666; font-weight: normal; }
-        
+
         /* ログインユーザー表示 */
         .login-info { margin-left: auto; font-size: 14px; color: #555; background: #eee; padding: 5px 10px; border-radius: 4px; }
 
@@ -259,7 +369,8 @@
         input[type="text"], textarea { width: 100%; padding: 10px; margin-top: 5px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
         button { padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; color: white; margin-top: 25px; transition: opacity 0.2s; }
         button:hover { opacity: 0.9; }
-        
+        button:disabled { opacity: 0.6; cursor: default; }
+
         .btn-primary { background: #007bff; }
         .btn-lock { background: #28a745; margin-left: 10px; font-size: 14px; padding: 8px 16px; }
         .btn-delete { background: #dc3545; margin-left: 10px; font-size: 14px; padding: 8px 16px; }
@@ -272,7 +383,7 @@
         .symbol-ok { color: #d9534f; font-weight: bold; font-size: 1.2em; }
         .symbol-tri { color: #f0ad4e; font-weight: bold; font-size: 1.2em; }
         .symbol-ng { color: #0275d8; font-weight: bold; font-size: 1.2em; }
-        
+
         .hidden { display: none; }
         .input-area { background: #eef2f7; padding: 20px; border-radius: 6px; margin-top: 30px; }
         .share-url-box { background: #f0f0f0; padding: 10px; border-radius: 4px; word-break: break-all; font-family: monospace; color: #007bff; }
@@ -298,7 +409,7 @@
     <header class="app-header">
         <span class="logo-main">調整さん</span>
         <span class="logo-sub">庁内日程調整ツール</span>
-        
+
         <!-- ログイン情報表示エリア -->
         <div class="login-info">
             Login: <strong><%= Server.HtmlEncode(UserDisplayName) %></strong>
@@ -312,21 +423,21 @@
             候補日程を入力してイベントページを作成します。<br>
             作成されたURLを参加者に共有してください。
         </p>
-        
+
         <label>イベント名</label>
         <input type="text" id="new-title" placeholder="例：第3回DX推進会議">
-        
+
         <label>候補日程（1行に1つ入力）</label>
         <textarea id="new-dates" rows="6" placeholder="5/20 10:00&#13;&#10;5/20 13:00&#13;&#10;5/21 10:00"></textarea>
-        
-        <button class="btn-primary" onclick="execCreateEvent()">イベントを作成する</button>
+
+        <button id="btn-create" class="btn-primary" onclick="execCreateEvent()">イベントを作成する</button>
     </div>
 
     <!-- 調整・閲覧画面 -->
     <div id="schedule-view" class="hidden">
         <h2 id="evt-title">イベント名</h2>
         <div id="locked-banner" class="locked-banner hidden">このイベントは確定済みのため、回答を締め切っています</div>
-        
+
         <div style="margin-bottom: 20px;">
             <span style="font-size:14px; font-weight:bold;">共有用URL：</span>
             <div id="share-url" class="share-url-box"></div>
@@ -341,9 +452,9 @@
             <label>氏名</label>
             <!-- AD取得した氏名を初期値に設定するための場所 -->
             <input type="text" id="my-name" placeholder="所属 氏名">
-            
+
             <div id="date-inputs"></div>
-            
+
             <label>コメント（任意）</label>
             <input type="text" id="my-comment" placeholder="例：午後以降なら参加可能です">
 
@@ -361,7 +472,7 @@
                 <button onclick="hideConfirm()" class="btn-confirm-cancel">キャンセル</button>
             </div>
         </div>
-        
+
         <div style="margin-top:20px; text-align:right;">
             <a href="default.aspx" style="color:#007bff; text-decoration:none;">&laquo; トップに戻る</a>
         </div>
@@ -386,85 +497,109 @@
         if(id) loadEvent(id);
     });
 
-    function execCreateEvent(){
-        var title = $("#new-title").val();
-        var dates = $("#new-dates").val();
-        
-        if(!title || !dates) { alert("イベント名と日程を入力してください"); return; }
+    // ---------------------------------------------------------
+    // API呼び出し（成功判定と失敗時メッセージを一元化）
+    // ---------------------------------------------------------
+    function apiPost(mode, data, onSuccess){
+        return $.post("default.aspx?mode=" + mode, data)
+            .done(function(res){
+                if(res && res.status === "ok"){
+                    onSuccess(res);
+                } else {
+                    showToast("エラー：" + ((res && res.msg) ? res.msg : "処理に失敗しました"));
+                }
+            })
+            .fail(function(){
+                showToast("通信エラーが発生しました。時間をおいて再度お試しください。");
+            });
+    }
 
-        $.post("default.aspx?mode=create", {
-            title: title,
-            dates: dates
-        }, function(res){
-            if(res.status === "ok"){
-                window.location.href = "default.aspx?id=" + res.id;
-            } else {
-                alert(res.msg);
-            }
-        });
+    function execCreateEvent(){
+        var title = $.trim($("#new-title").val());
+        var dates = $.trim($("#new-dates").val());
+
+        if(!title || !dates) { showToast("イベント名と日程を入力してください"); return; }
+
+        var $btn = $("#btn-create").prop("disabled", true);
+        apiPost("create", { title: title, dates: dates }, function(res){
+            window.location.href = "default.aspx?id=" + encodeURIComponent(res.id);
+        }).always(function(){ $btn.prop("disabled", false); });
     }
 
     function loadEvent(id){
         currentEventId = id;
-        $.getJSON("default.aspx?mode=load&id=" + id, function(data){
-            if(data.status === "error"){ alert("イベントが見つかりません。削除された可能性があります。"); window.location.href="default.aspx"; return; }
-            
-            eventData = data;
-            $("#create-view").addClass("hidden");
-            $("#schedule-view").removeClass("hidden");
-            
-            $("#evt-title").text(data.title);
-            document.title = data.title + " - 調整さん";
-            $("#share-url").text(window.location.href);
-            renderTable(data);
-            
-            if(data.locked) {
-                $("#locked-banner").removeClass("hidden");
-                $("#input-container").addClass("hidden");
-            } else {
-                $("#locked-banner").addClass("hidden");
-                $("#input-container").removeClass("hidden");
-                renderInputs(data);
-                if(currentUserDisplayName) $("#my-name").val(currentUserDisplayName);
-            }
-
-            if(data.isOwner) {
-                $("#admin-controls").removeClass("hidden");
-                if(data.locked) {
-                    $(".btn-lock").hide();
-                } else {
-                    $(".btn-lock").show();
+        $.getJSON("default.aspx?mode=load&id=" + encodeURIComponent(id))
+            .done(function(data){
+                if(!data || data.status === "error"){
+                    alert("イベントが見つかりません。削除された可能性があります。");
+                    window.location.href = "default.aspx";
+                    return;
                 }
-            } else {
-                $("#admin-controls").addClass("hidden");
-            }
-        });
+
+                eventData = data;
+                $("#create-view").addClass("hidden");
+                $("#schedule-view").removeClass("hidden");
+
+                $("#evt-title").text(data.title);
+                document.title = data.title + " - 調整さん";
+                $("#share-url").text(window.location.href);
+                renderTable(data);
+
+                if(data.locked) {
+                    $("#locked-banner").removeClass("hidden");
+                    $("#input-container").addClass("hidden");
+                } else {
+                    $("#locked-banner").addClass("hidden");
+                    $("#input-container").removeClass("hidden");
+                    renderInputs(data);
+                    if(currentUserDisplayName) $("#my-name").val(currentUserDisplayName);
+                }
+
+                if(data.isOwner) {
+                    $("#admin-controls").removeClass("hidden");
+                    if(data.locked) {
+                        $(".btn-lock").hide();
+                    } else {
+                        $(".btn-lock").show();
+                    }
+                } else {
+                    $("#admin-controls").addClass("hidden");
+                }
+            })
+            .fail(function(){
+                showToast("イベントの読み込みに失敗しました。再読み込みしてください。");
+            });
     }
 
     function renderTable(data){
-        if(data.participants.length === 0) {
+        var dates = data.dates || [];
+        var participants = data.participants || [];
+
+        if(participants.length === 0) {
             $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">まだ回答がありません。</p>');
             return;
         }
         var parts = [];
         parts.push('<table><thead><tr><th style="min-width:120px;">参加者</th>');
-        data.dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
+        dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
         parts.push('<th style="min-width:150px;">コメント</th></tr></thead><tbody>');
 
-        data.participants.forEach(function(p){
+        participants.forEach(function(p){
+            var answers = p.answers || [];
             parts.push('<tr><td>' + escapeHtml(p.name) + '</td>');
-            p.answers.forEach(function(a){
-                var sym = a===2 ? "○" : (a===1 ? "△" : "×");
-                var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : "symbol-ng");
+            for(var i=0; i<dates.length; i++){
+                var a = answers[i];
+                var sym = a===2 ? "○" : (a===1 ? "△" : (a===0 ? "×" : "-"));
+                var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : (a===0 ? "symbol-ng" : ""));
                 parts.push('<td class="'+cls+'">' + sym + '</td>');
-            });
+            }
             parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
         });
 
         parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">○の数</td>');
-        for(var i=0; i<data.dates.length; i++){
+        for(var j=0; j<dates.length; j++){
             var count = 0;
-            data.participants.forEach(function(p){ if(p.answers[i]===2) count++; });
+            participants.forEach(function(p){ if(p.answers && p.answers[j]===2) count++; });
             parts.push('<td>' + count + '</td>');
         }
         parts.push('<td>-</td></tr></tbody></table>');
@@ -472,13 +607,15 @@
     }
 
     function renderInputs(data){
+        var dates = data.dates || [];
+        var participants = data.participants || [];
         var myName = currentUserDisplayName || $("#my-name").val();
         var myAnswers = null;
         var myComment = null;
-        data.participants.forEach(function(p){ if(p.name === myName) { myAnswers = p.answers; myComment = p.comment || ""; } });
+        participants.forEach(function(p){ if(p.name === myName) { myAnswers = p.answers; myComment = p.comment || ""; } });
 
         var parts = [];
-        data.dates.forEach(function(d, idx){
+        dates.forEach(function(d, idx){
             var val = (myAnswers && myAnswers[idx] !== undefined) ? myAnswers[idx] : 2;
             parts.push('<div style="margin-top:10px; border-bottom:1px dotted #ccc; padding-bottom:5px;">');
             parts.push('<span style="font-weight:bold;">' + escapeHtml(d) + '</span><br>');
@@ -492,52 +629,44 @@
     }
 
     function submitAnswer(){
-        var name = $("#my-name").val();
+        var name = $.trim($("#my-name").val());
         if(!name){ showToast("名前を入力してください"); return; }
 
+        var dates = (eventData && eventData.dates) || [];
+        if(dates.length === 0){ showToast("候補日程がありません"); return; }
+
         var answers = [];
-        for(var i=0; i<eventData.dates.length; i++){
-            answers.push($('input[name="ans_'+i+'"]:checked').val());
+        for(var i=0; i<dates.length; i++){
+            var val = $('input[name="ans_'+i+'"]:checked').val();
+            if(val === undefined){ showToast("すべての候補日に回答してください"); return; }
+            answers.push(val);
         }
 
         var $btn = $("#btn-submit").prop("disabled", true);
-        $.post("default.aspx?mode=update", {
+        apiPost("update", {
             id: currentEventId,
             name: name,
             answers: answers.join(","),
             comment: $("#my-comment").val()
-        }, function(res){
-            if(res.status === "ok"){
-                loadEvent(currentEventId);
-                showToast("登録しました。");
-                $("#my-comment").val("");
-            } else {
-                showToast("エラー：" + res.msg);
-            }
+        }, function(){
+            loadEvent(currentEventId);
+            showToast("登録しました。");
         }).always(function(){ $btn.prop("disabled", false); });
     }
 
     function execLockEvent() {
         showConfirm("本当に締め切りますか？締め切ると、これ以上回答を追加できなくなります。", function(){
-            $.post("default.aspx?mode=lock", { id: currentEventId }, function(res){
-                if(res.status === "ok") {
-                    loadEvent(currentEventId);
-                    showToast("締め切りました。");
-                } else {
-                    showToast("エラーが発生しました");
-                }
+            apiPost("lock", { id: currentEventId }, function(){
+                loadEvent(currentEventId);
+                showToast("締め切りました。");
             });
         }, "#28a745");
     }
 
     function execDeleteEvent() {
         showConfirm("本当に削除しますか？この操作は取り消せません。", function(){
-            $.post("default.aspx?mode=delete", { id: currentEventId }, function(res){
-                if(res.status === "ok") {
-                    window.location.href = "default.aspx";
-                } else {
-                    showToast("エラーが発生しました");
-                }
+            apiPost("delete", { id: currentEventId }, function(){
+                window.location.href = "default.aspx";
             });
         }, "#dc3545");
     }
@@ -573,8 +702,8 @@
     }
 
     function escapeHtml(str) {
-        if(!str) return "";
-        return str.replace(/[&<>"']/g, function(m) {
+        if(str === null || str === undefined) return "";
+        return String(str).replace(/[&<>"']/g, function(m) {
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
         });
     }
