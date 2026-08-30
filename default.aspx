@@ -56,7 +56,10 @@
     // =============================================================================
     protected void Page_Load(object sender, EventArgs e)
     {
-        string mode = Request["mode"];
+        // Request["mode"] は QueryString → Form → Cookies の順に探すため、
+        // 他アプリが残した "mode" という名前のCookieで通常表示が壊れる。
+        // API呼び出しは必ずクエリ文字列でmodeを渡すため、そこだけを見る。
+        string mode = Request.QueryString["mode"];
 
         // 通常アクセス時 (HTML表示)
         if (string.IsNullOrEmpty(mode))
@@ -84,8 +87,8 @@
         try
         {
             using (PrincipalContext ctx = new PrincipalContext(ContextType.Domain))
+            using (UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId))
             {
-                UserPrincipal user = UserPrincipal.FindByIdentity(ctx, loginId);
                 UserDisplayName = (user != null && !string.IsNullOrEmpty(user.DisplayName))
                     ? user.DisplayName
                     : loginId;
@@ -494,7 +497,11 @@
 
         var params = new URLSearchParams(window.location.search);
         var id = params.get("id");
-        if(id) loadEvent(id);
+        if(id) {
+            // 読み込み完了まで新規作成画面が一瞬見えてしまうため、先に隠す
+            $("#create-view").addClass("hidden");
+            loadEvent(id);
+        }
     });
 
     // ---------------------------------------------------------
@@ -551,8 +558,12 @@
                 } else {
                     $("#locked-banner").addClass("hidden");
                     $("#input-container").removeClass("hidden");
+                    // 氏名欄が空のときだけAD名を補完する。
+                    // (代理入力などで利用者が書き換えた氏名を登録後に戻さないため)
+                    if(currentUserDisplayName && !$.trim($("#my-name").val())) {
+                        $("#my-name").val(currentUserDisplayName);
+                    }
                     renderInputs(data);
-                    if(currentUserDisplayName) $("#my-name").val(currentUserDisplayName);
                 }
 
                 if(data.isOwner) {
@@ -567,6 +578,7 @@
                 }
             })
             .fail(function(){
+                $("#create-view").removeClass("hidden");
                 showToast("イベントの読み込みに失敗しました。再読み込みしてください。");
             });
     }
@@ -575,44 +587,49 @@
         var dates = data.dates || [];
         var participants = data.participants || [];
 
-        if(participants.length === 0) {
-            $("#table-container").html('<p style="color:#888; text-align:center; padding:20px;">まだ回答がありません。</p>');
-            return;
-        }
         var parts = [];
         parts.push('<table><thead><tr><th style="min-width:120px;">参加者</th>');
         dates.forEach(function(d){ parts.push('<th>' + escapeHtml(d) + '</th>'); });
         parts.push('<th style="min-width:150px;">コメント</th></tr></thead><tbody>');
 
-        participants.forEach(function(p){
-            var answers = p.answers || [];
-            parts.push('<tr><td>' + escapeHtml(p.name) + '</td>');
-            for(var i=0; i<dates.length; i++){
-                var a = answers[i];
-                var sym = a===2 ? "○" : (a===1 ? "△" : (a===0 ? "×" : "-"));
-                var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : (a===0 ? "symbol-ng" : ""));
-                parts.push('<td class="'+cls+'">' + sym + '</td>');
-            }
-            parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
-        });
+        if(participants.length === 0) {
+            // 回答0件でも候補日を確認できるよう、表の枠は必ず表示する
+            parts.push('<tr><td colspan="' + (dates.length + 2) + '" style="color:#888; padding:20px;">まだ回答がありません。</td></tr>');
+        } else {
+            participants.forEach(function(p){
+                var answers = p.answers || [];
+                parts.push('<tr><td>' + escapeHtml(p.name) + '</td>');
+                for(var i=0; i<dates.length; i++){
+                    var a = answers[i];
+                    var sym = a===2 ? "○" : (a===1 ? "△" : (a===0 ? "×" : "-"));
+                    var cls = a===2 ? "symbol-ok" : (a===1 ? "symbol-tri" : (a===0 ? "symbol-ng" : ""));
+                    parts.push('<td class="'+cls+'">' + sym + '</td>');
+                }
+                parts.push('<td style="text-align:left;">' + escapeHtml(p.comment) + '</td></tr>');
+            });
 
-        parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">○の数</td>');
-        for(var j=0; j<dates.length; j++){
-            var count = 0;
-            participants.forEach(function(p){ if(p.answers && p.answers[j]===2) count++; });
-            parts.push('<td>' + count + '</td>');
+            parts.push('<tr style="background:#ffffe0; font-weight:bold;"><td style="background:#ffffe0;">○の数</td>');
+            for(var j=0; j<dates.length; j++){
+                var count = 0;
+                participants.forEach(function(p){ if(p.answers && p.answers[j]===2) count++; });
+                parts.push('<td>' + count + '</td>');
+            }
+            parts.push('<td>-</td></tr>');
         }
-        parts.push('<td>-</td></tr></tbody></table>');
+        parts.push('</tbody></table>');
         $("#table-container").html(parts.join(''));
     }
 
     function renderInputs(data){
         var dates = data.dates || [];
         var participants = data.participants || [];
-        var myName = currentUserDisplayName || $("#my-name").val();
+        // 入力中の氏名を優先して既存回答を復元する（AD名から書き換えた場合に対応）
+        var myName = $.trim($("#my-name").val()) || currentUserDisplayName;
         var myAnswers = null;
         var myComment = null;
-        participants.forEach(function(p){ if(p.name === myName) { myAnswers = p.answers; myComment = p.comment || ""; } });
+        participants.forEach(function(p){
+            if(p.name && $.trim(p.name) === myName) { myAnswers = p.answers; myComment = p.comment || ""; }
+        });
 
         var parts = [];
         dates.forEach(function(d, idx){
@@ -656,38 +673,47 @@
 
     function execLockEvent() {
         showConfirm("本当に締め切りますか？締め切ると、これ以上回答を追加できなくなります。", function(){
+            var $btns = $(".btn-lock, .btn-delete").prop("disabled", true);
             apiPost("lock", { id: currentEventId }, function(){
                 loadEvent(currentEventId);
                 showToast("締め切りました。");
-            });
+            }).always(function(){ $btns.prop("disabled", false); });
         }, "#28a745");
     }
 
     function execDeleteEvent() {
         showConfirm("本当に削除しますか？この操作は取り消せません。", function(){
+            var $btns = $(".btn-lock, .btn-delete").prop("disabled", true);
             apiPost("delete", { id: currentEventId }, function(){
                 window.location.href = "default.aspx";
-            });
+            }).always(function(){ $btns.prop("disabled", false); });
         }, "#dc3545");
     }
 
     function copyShareUrl() {
         var url = $("#share-url").text();
-        if(navigator.clipboard) {
+        function fallback(){ window.prompt("URL:", url); }
+
+        // http接続やフォーカス喪失時は writeText が失敗するため、
+        // 反応が無いまま終わらないようフォールバックを必ず用意する
+        if(navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(url).then(function(){
                 var $btn = $(".copy-btn");
                 $btn.text("コピーしました！").addClass("copied");
                 setTimeout(function(){ $btn.text("URLをコピー").removeClass("copied"); }, 2000);
-            });
+            }, fallback);
         } else {
-            window.prompt("URL:", url);
+            fallback();
         }
     }
 
+    var toastTimer = null;
     function showToast(msg) {
         var $t = $("#toast");
         $t.text(msg).addClass("show");
-        setTimeout(function(){ $t.removeClass("show"); }, 2500);
+        // 連続表示時に前回のタイマーで消えてしまわないよう作り直す
+        if(toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function(){ $t.removeClass("show"); toastTimer = null; }, 2500);
     }
 
     function showConfirm(msg, action, btnColor) {
