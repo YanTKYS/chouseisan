@@ -86,6 +86,7 @@
 chouseisan/
 ├── default.aspx       # アプリ本体（サーバーサイドC# + HTML/CSS/JS）
 ├── web.config         # ASP.NET設定（.NET 4.7、AD参照設定）
+├── LICENSE            # MIT License（自作部分）
 └── data/              # イベントデータ保存ディレクトリ（自動生成）
     └── evt*.json
 ```
@@ -104,7 +105,7 @@ chouseisan/
 4. Windows認証を使用する場合は IIS の認証設定で「Windows 認証」を有効化
 
 ### jQuery
-`./common/jquery-3.6.0.min.js` を別途配置してください（`default.aspx` からの相対パスで参照しています）。
+`./common/jquery-3.6.0.min.js` を別途配置してください（`default.aspx` からの相対パスで参照しています）。jQueryはこのリポジトリに含まれておらず、ライセンスの扱いは「[ライセンス](#ライセンス)」を参照してください。
 
 ## 文字コードに関する運用注意事項
 
@@ -147,3 +148,37 @@ $content = Get-Content $src -Encoding UTF8 -Raw
 - `web.config` の `debug="true"` は開発用の設定です。本番運用では `false` を推奨します
 - データファイルはWebルートの親ディレクトリ (`../chouseisan/data/`) に保存されます。IISの設定でWebから直接アクセスできないパスにすることを確認してください
 - データファイルの読み書きはアプリケーション内で直列化していますが、複数のワーカープロセス（Webガーデン／複数サーバー構成）では同時更新の保護が効きません。単一ワーカープロセスで運用してください
+
+## ライセンス
+
+### 自作部分（MIT License）
+
+このリポジトリの自作部分は [MIT License](./LICENSE) で提供します（Copyright (c) 2026 YanTKYS）。対象は次のとおりです。
+
+- `default.aspx`
+- `web.config`
+- `README.md`
+- `LICENSE`
+
+`default.aspx` と `web.config` の冒頭には著作権表示とライセンスの参照を記載しています。`default.aspx` はサーバー側コメント（`<%-- --%>`）、`web.config` はXMLコメントを用いており、実行結果・ブラウザへの出力・設定内容には影響しません。
+
+### 第三者のソフトウェア（MIT License対象外）
+
+| 名称 | バージョン | ライセンス | 扱い |
+|------|-----------|-----------|------|
+| [jQuery](https://jquery.com/) | 3.6.0 | MIT License（Copyright OpenJS Foundation and other contributors） | このリポジトリには含まれません。別途配置するファイル（`./common/jquery-3.6.0.min.js`）は上記の自作部分のライセンスの対象外であり、元のMIT Licenseと著作権表示が適用されます |
+
+jQueryのファイル先頭に記載されたライセンス表示は削除・改変せず、配布されたままの状態で配置してください。ライセンスの詳細は <https://jquery.org/license/> を参照してください。
+
+### データ・運用環境の扱い
+
+次のものは自作コードのライセンスの対象ではありません。
+
+- 参加者名・回答・コメントなどのイベントデータ（`data/` 配下のJSONファイル）。各データの権利および個人情報の取り扱いは、運用者の責任と規程に従います
+- Windows認証 / Active Directory、IIS、.NET Frameworkなどの実行環境と、組織ごとの設定・ローカル運用情報
+
+このライセンスは、閉域ネットワークでの運用や認証を前提とする既存の利用条件を変更するものではありません。
+
+### IISへの配置時の注意
+
+IISへファイルをコピーして運用する場合も、MIT Licenseの条件に従い、著作権表示とライセンス文を保持してください。具体的には、`default.aspx` と `web.config` を配置する際に `LICENSE` ファイルも同じ配置先（またはそれに付属する資料）へコピーし、再配布する場合は `LICENSE` を同梱してください。Shift-JISへ変換する場合も、ファイル冒頭のコメントはASCII文字のみのため、そのまま維持されます。
