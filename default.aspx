@@ -5,6 +5,7 @@
 <%@ Import Namespace="System.Text" %>
 <%@ Import Namespace="System.DirectoryServices.AccountManagement" %>
 <%@ Import Namespace="System.Text.RegularExpressions" %>
+<%-- Copyright (c) 2026 YanTKYS. Licensed under the MIT License; see the LICENSE file distributed with this software. Third-party software (jQuery) is not covered by this notice and keeps its own license. --%>
 
 <script runat="server">
     // =============================================================================
